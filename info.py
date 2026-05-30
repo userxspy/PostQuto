@@ -42,7 +42,7 @@ if not API_ID or not API_HASH or not BOT_TOKEN:
     exit(1)
 
 BOT_ID = int(BOT_TOKEN.split(":")[0])
-PORT = int(environ.get("PORT", 80))
+PORT = int(environ.get("PORT", 8000)) # कोएब के लिए 8000 पोर्ट सबसे बेस्ट और स्टेबल है
 
 # ─────────────────────────────────────────────
 # 👑 ADMINS
@@ -57,7 +57,7 @@ ADMINS = [int(x) for x in ADMINS.split()]
 # 🖼️ IMAGES
 # ─────────────────────────────────────────────
 PICS = environ.get("PICS", "https://i.postimg.cc/8C15CQ5y/1.png").split()
-TMDB_API_KEY = environ.get("TMDB_API_KEY", "यहाँ_अपनी_TMDb_की_डालें")
+TMDB_API_KEY = environ.get("TMDB_API_KEY", "")
 
 # ─────────────────────────────────────────────
 # 📢 CHANNELS
@@ -87,10 +87,10 @@ if not DATABASE_URL:
 TIME_ZONE = environ.get("TIME_ZONE", "Asia/Kolkata")
 DELETE_TIME = int(environ.get("DELETE_TIME", 3600))
 CACHE_TIME = int(environ.get("CACHE_TIME", 300))
-MAX_BTN = int(environ.get("MAX_BTN", 12))
+MAX_BTN = int(environ.get("MAX_BTN", 21)) # पेजिनेशन को सही रखने के लिए 21 बेस्ट है
 PM_FILE_DELETE_TIME = int(environ.get("PM_FILE_DELETE_TIME", 3600))
 
-GEMINI_API_KEY = environ.get("GEMINI_API_KEY", "Yaha_Apni_API_Key_Dalein")
+GEMINI_API_KEY = environ.get("GEMINI_API_KEY", "")
 
 # ─────────────────────────────────────────────
 # 🧩 FEATURE FLAGS
@@ -115,13 +115,12 @@ if not BIN_CHANNEL:
     logger.error("BIN_CHANNEL missing")
     exit(1)
 
-URL = environ.get("URL", "")
+URL = environ.get("URL", "").strip()
 if not URL:
     logger.error("URL missing")
     exit(1)
 
-# ✅ FIX: http:// को https:// में auto-convert करो
-# Telegram WebApp और Koyeb दोनों के लिए HTTPS जरूरी है
+# ✅ HTTPS Auto-Convert Logic
 if URL.startswith("http://"):
     logger.warning(f"URL is HTTP, auto-converting to HTTPS: {URL}")
     URL = "https://" + URL[len("http://"):]
@@ -129,13 +128,15 @@ if URL.startswith("http://"):
 if URL.startswith("https://"):
     if not URL.endswith("/"): URL += "/"
 elif is_valid_ip(URL):
-    # ✅ FIX: IP के लिए भी https prefer करो (अगर cert हो)
-    # अगर plain IP पर TLS नहीं है तो http रहेगा, लेकिन Mini App काम नहीं करेगा
     URL = f"https://{URL}/"
     logger.warning("IP-based URL detected. Telegram WebApp requires a valid HTTPS domain, not a plain IP.")
 else:
-    logger.error("Invalid URL - must start with https:// for Telegram WebApp support")
-    exit(1)
+    # कोएब डार्क डोमेन के लिए ऑटो-फॉर्मैटिंग बिल्ड पैच ताकि exit(1) क्रैश न हो
+    if not URL.startswith("https://") and "." in URL:
+        URL = "https://" + URL.rstrip("/") + "/"
+    else:
+        logger.error("Invalid URL - must start with https:// for Telegram WebApp support")
+        exit(1)
 
 # ─────────────────────────────────────────────
 # 🎭 REACTIONS
@@ -143,12 +144,14 @@ else:
 REACTIONS = environ.get("REACTIONS", "👍 ❤️ 🔥 😍 🤝").split()
 
 # ─────────────────────────────────────────────
-# 💎 PREMIUM
+# 💎 PREMIUM CONFIG
 # ─────────────────────────────────────────────
 PRE_DAY_AMOUNT = int(environ.get("PRE_DAY_AMOUNT", 10))
-UPI_ID = environ.get("UPI_ID", "")
-UPI_NAME = environ.get("UPI_NAME", "")
-RECEIPT_SEND_USERNAME = environ.get("RECEIPT_SEND_USERNAME", "")
+UPI_ID = environ.get("UPI_ID", "").strip()
+UPI_NAME = environ.get("UPI_NAME", "").strip()
+RECEIPT_SEND_USERNAME = environ.get("RECEIPT_SEND_USERNAME", "").strip()
 
+# ✅ SAFE FIX: UPI क्रेडेंशियल्स गायब होने पर प्रीमियम बंद नहीं होगा, 
+# बल्कि बोट केवल लॉग्स में वार्निंग देगा ताकि आपका बोट हमेशा चलता रहे।
 if not UPI_ID or not UPI_NAME:
-    IS_PREMIUM = False
+    logger.warning("⚠️ UPI_ID or UPI_NAME is missing in environment variables. QR Code payment won't display correctly until set.")
