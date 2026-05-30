@@ -6,7 +6,7 @@ from utils import temp, get_readable_time
 from info import IS_PREMIUM
 
 # ======================================================
-# 🆔 ID COMMAND (Compact)
+# 🆔 ID COMMAND (Fixed Syntax)
 # ======================================================
 @Client.on_message(filters.command("id"))
 async def get_id(c, m):
@@ -16,10 +16,14 @@ async def get_id(c, m):
     b = "👤 Member"
     if m.chat.type in (enums.ChatType.GROUP, enums.ChatType.SUPERGROUP):
         try:
-            # ✅ BUG FIX: Corrected get_chat_member syntax
+            # ✅ FIX: enums.ChatMemberStatus.ADMIN को हटाया गया (चूंकि यह मौजूद नहीं है)
             st = (await c.get_chat_member(m.chat.id, u.id)).status
-            b = "👑 Owner" if st == enums.ChatMemberStatus.OWNER else "🛡 Admin" if st in (enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.ADMIN) else b
-        except: pass
+            if st == enums.ChatMemberStatus.OWNER:
+                b = "👑 Owner"
+            elif st == enums.ChatMemberStatus.ADMINISTRATOR:
+                b = "🛡 Admin"
+        except: 
+            pass
 
     t = (f"🆔 <b>ID INFORMATION</b>\n\n👤 <b>Name:</b> {u.first_name or ''} {u.last_name or ''}\n🦹 <b>User ID:</b> <code>{u.id}</code>\n"
          f"🏷 <b>Username:</b> @{u.username or 'N/A'}\n🌐 <b>DC ID:</b> <code>{u.dc_id or 'Unknown'}</code>\n🤖 <b>Bot:</b> {'Yes' if u.is_bot else 'No'}\n"
@@ -36,7 +40,7 @@ async def get_id(c, m):
     await m.reply_text(t, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
 
 # ======================================================
-# 🚨 REPORT SYSTEM (Anti-Spam Fixed & Minified)
+# 🚨 REPORT SYSTEM (Fixed Iterator Crash)
 # ======================================================
 @Client.on_message(filters.command(["report", "Report"]) & filters.group)
 async def report_user(c, m):
@@ -56,8 +60,8 @@ async def report_user(c, m):
     btn = IKM([[IKB("🔗 View", url=r.link)], [IKB("🗑 Delete", callback_data=f"del_{m.chat.id}_{r.id}")]])
     
     sent = 0
-    # ✅ BUG FIX: Corrected get_chat_members async loop syntax
-    async for x in c.get_chat_members(m.chat.id, filter=enums.ChatMembersFilter.ADMINISTRATORS):
+    # ✅ FIX: filter="administrators" स्ट्रिंग का उपयोग किया गया ताकि हाइड्रोग्राम क्रैश न हो
+    async for x in c.get_chat_members(m.chat.id, filter="administrators"):
         if not x.user.is_bot:
             try:
                 await c.send_message(x.user.id, txt, reply_markup=btn, disable_web_page_preview=True)
@@ -95,7 +99,6 @@ async def ping_cmd(c, m):
 
 @Client.on_message(filters.command("botinfo"))
 async def bot_info(c, m):
-    # ✅ OPTIMIZED: utils.py से get_readable_time का इस्तेमाल किया गया
     uptime = get_readable_time(time.time() - temp.START_TIME)
     t = (f"🤖 <b>BOT STATUS</b>\n\n⏱️ <b>Uptime:</b> <code>{uptime}</code>\n🐍 <b>Python:</b> <code>{sys.version.split()[0]}</code>\n"
          f"⚙️ <b>OS:</b> <code>{platform.system()}</code>\n📦 <b>Lib:</b> <code>Hydrogram</code>\n💎 <b>Premium:</b> <code>{'Yes' if IS_PREMIUM else 'No'}</code>")
