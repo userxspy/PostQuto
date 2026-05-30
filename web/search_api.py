@@ -8,9 +8,13 @@ logger = logging.getLogger(__name__)
 
 search_routes = web.RouteTableDef()
 
+# ─────────────────────────────────────────────
+# 📸 THUMBNAIL CONCURRENCY & FLOOD LIMITER
+# ─────────────────────────────────────────────
 MAX_CACHE = 500
 thumb_cache = {}
-thumb_semaphore = asyncio.Semaphore(4)
+# ✅ FIX 1: Concurrency को 4 से घटाकर 1 किया ताकि टेलीग्राम पर एक साथ लोड न पड़े
+thumb_semaphore = asyncio.Semaphore(1)
 
 # ─────────────────────────────────────────────
 # 🚀 TELEGRAPH UPLOAD HELPER (Best Approach)
@@ -189,7 +193,7 @@ async def api_search(req):
     })
 
 # ─────────────────────────────────────────────
-# 📸 OPTIMIZED THUMBNAIL API (With Reload System)
+# 📸 OPTIMIZED THUMBNAIL API (With Reload & Flood Protection)
 # ─────────────────────────────────────────────
 @search_routes.get("/api/thumb")
 async def get_telegram_thumb(req):
@@ -200,7 +204,6 @@ async def get_telegram_thumb(req):
 
     headers = {"Content-Disposition": 'inline; filename="poster.jpg"'}
     
-    # यदि यूजर ने खुद रीलोड बटन दबाया है, तो 'NO_THUMB' ब्लॉक को कैशे से हटा दें
     if is_retry and fid in thumb_cache:
         if thumb_cache[fid] == "NO_THUMB":
             thumb_cache.pop(fid, None)
@@ -208,55 +211,74 @@ async def get_telegram_thumb(req):
     # 1. मेमोरी कैशे चेक करें
     if fid in thumb_cache:
         if thumb_cache[fid] == "NO_THUMB":
-            return web.Response(status=404) # फ्रंटएंड को 404 दें ताकि रीलोड बटन दिखे
+            return web.Response(status=404)
         return web.Response(body=thumb_cache[fid], content_type="image/jpeg", headers=headers)
 
+    # सख्त कतार (Strict Queue): एक बार में सिर्फ एक रिक्वेस्ट अंदर जाएगी
     async with thumb_semaphore:
         if fid in thumb_cache and thumb_cache[fid] != "NO_THUMB":
             return web.Response(body=thumb_cache[fid], content_type="image/jpeg", headers=headers)
 
-        try:
-            # 2. टेलीग्राम बोट से मीडिया मंगाएं
-            msg = await temp.BOT.send_cached_media(chat_id=BIN_CHANNEL, file_id=fid)
-            thumb_id = None
-            if msg.video and msg.video.thumbs:
-                thumb_id = msg.video.thumbs[0].file_id
-            elif msg.document and msg.document.thumbs:
-                thumb_id = msg.document.thumbs[0].file_id
+        # बोट को रेट लिमिट से बचाने के लिए सेमाफोर के अंदर हर बार थोड़ा सा गैप (0.5s Delay) दें
+        await asyncio.sleep(0.5)
 
-            if thumb_id:
-                file_data = await temp.BOT.download_media(thumb_id, in_memory=True)
-                thumb_bytes = file_data.getvalue()
+        # रीट्राई लूप ताकि अगर फ्लड आए तो बोट खुद रुककर दोबारा कोशिश करे
+        for attempt in range(3):
+            try:
+                # 2. टेलीग्राम बोट से मीडिया मंगाएं
+                msg = await temp.BOT.send_cached_media(chat_id=BIN_CHANNEL, file_id=fid)
+                thumb_id = None
                 
-                if len(thumb_cache) >= MAX_CACHE:
-                    oldest_key = next(iter(thumb_cache))
-                    thumb_cache.pop(oldest_key, None)
+                # ✅ FIX 2: पहले सुनिश्चित करें कि thumbs लिस्ट मौजूद है और खाली नहीं है
+                if msg.video and msg.video.thumbs and len(msg.video.thumbs) > 0:
+                    thumb_id = msg.video.thumbs[0].file_id
+                elif msg.document and msg.document.thumbs and len(msg.document.thumbs) > 0:
+                    thumb_id = msg.document.thumbs[0].file_id
+
+                if thumb_id and thumb_id != "None":
+                    file_data = await temp.BOT.download_media(thumb_id, in_memory=True)
+                    thumb_bytes = file_data.getvalue()
                     
-                thumb_cache[fid] = thumb_bytes
+                    if len(thumb_cache) >= MAX_CACHE:
+                        oldest_key = next(iter(thumb_cache))
+                        thumb_cache.pop(oldest_key, None)
+                        
+                    thumb_cache[fid] = thumb_bytes
+                    
+                    # Telegraph पर अपलोड करने का प्रयास
+                    perm_thumb_url = await upload_to_telegraph(thumb_bytes)
+                    if perm_thumb_url and "telegra.ph" in perm_thumb_url:
+                        for col_name, col in COLLECTIONS.items():
+                            await col.update_many(
+                                {"file_ref": fid},
+                                {"$set": {"thumb_url": perm_thumb_url}}
+                            )
+                        logger.info(f"🎉 Thumb Cache OK & Saved in DB: {fid}")
+                    
+                    asyncio.create_task(msg.delete())
+                    return web.Response(body=thumb_bytes, content_type="image/jpeg", headers=headers)
+                else:
+                    thumb_cache[fid] = "NO_THUMB"
+                    asyncio.create_task(msg.delete())
+                    return web.Response(status=404)
+
+            # ✅ FIX 3: FloodWait एरर को यहीं पकड़कर बोट को लाइव सुला (Sleep) देंगे
+            except Exception as e:
+                err_text = str(e)
+                if "FLOOD_WAIT" in err_text or "420" in err_text:
+                    match = re.search(r'wait of (\d+) second', err_text)
+                    wait_time = int(match.group(1)) if match else 30
+                    
+                    logger.warning(f"⏳ Telegram FloodWait Detected! Sleeping for {wait_time}s on attempt {attempt+1}/3...")
+                    # बोट क्रैश होने की जगह चुपचाप उतने सेकंड का इंतज़ार करेगा
+                    await asyncio.sleep(wait_time + 2)
+                    continue # दोबारा लूप चलाकर फिर से ट्राई करेगा
                 
-                # 🚀 Telegraph पर अपलोड करने का प्रयास
-                perm_thumb_url = await upload_to_telegraph(thumb_bytes)
-                
-                # ✅ सिर्फ असली लिंक मिलने पर ही DB में लॉक करें
-                if perm_thumb_url and "telegra.ph" in perm_thumb_url:
-                    for col_name, col in COLLECTIONS.items():
-                        await col.update_many(
-                            {"file_ref": fid},
-                            {"$set": {"thumb_url": perm_thumb_url}}
-                        )
-                    logger.info(f"🎉 Thumb Cache OK & Saved in DB: {fid}")
-                
-                asyncio.create_task(msg.delete())
-                return web.Response(body=thumb_bytes, content_type="image/jpeg", headers=headers)
-            else:
-                thumb_cache[fid] = "NO_THUMB"
-                asyncio.create_task(msg.delete())
-                return web.Response(status=404)
-                
-        except Exception as e:
-            logger.error(f"❌ Telegram Error/Rate Limit: {e}")
-            # कैशे या DB में कुछ भी गलत सेव नहीं करेंगे, फ्रंटएंड को सीधा 429 भेजेंगे
-            return web.Response(status=429)
+                logger.error(f"❌ Telegram Error: {e}")
+                return web.Response(status=429)
+        
+        # अगर 3 बार कोशिश करने के बाद भी फ्लड नहीं हटा
+        return web.Response(status=429)
 
 async def _auto_del_msg(msg, delay):
     await asyncio.sleep(delay)
