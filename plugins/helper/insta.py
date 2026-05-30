@@ -38,12 +38,11 @@ async def async_post(url, data=None, headers=None):
 # ─────────────────────────────────────────────
 @Client.on_message(filters.command("insta") & filters.private)
 async def toggle_insta(client, message):
-    # सिर्फ बोट का एडमिन ही इसे ऑन या ऑफ कर सकता है
     if message.from_user.id not in ADMINS:
         return await message.reply("❌ **यह कमांड सिर्फ बोट एडमिन के लिए है!**")
         
     if len(message.command) < 2:
-        return await message.reply("⚙️ **सही तरीका:**\n• `/insta on` - डाउनलोडर चालू करें\n• `/insta off` - डाउनलोडer बंद करें")
+        return await message.reply("⚙️ **सही तरीका:**\n• `/insta on` - डाउनलोडर चालू करें\n• `/insta off` - डाउनलोडर बंद करें")
         
     status = message.command[1].lower()
     if status == "on":
@@ -58,12 +57,10 @@ async def toggle_insta(client, message):
 # ─────────────────────────────────────────────
 # 📥 INSTAGRAM LINK HANDLER (PM Only)
 # ─────────────────────────────────────────────
-# ✅ FIX: filters.private जोड़ा गया ताकि यह सिर्फ बोट के पीएम (DM) में काम करे, ग्रुप में नहीं
 @Client.on_message(filters.regex(r'https?://.*instagram[^\s]+') & filters.private & filters.incoming)
 async def link_handler(Mbot, message):
-    # 1. चेक करें कि एडमिन ने सर्विस चालू रखी है या बंद
     settings = await db.groups.find_one({"id": "insta_settings"})
-    is_active = settings.get("status", True) if settings else True # डिफ़ॉल्ट रूप से चालू रहेगा
+    is_active = settings.get("status", True) if settings else True 
     
     if not is_active:
         return await message.reply("🚧 **Sorry!** इंस्टाग्राम डाउनलोडर अभी बोट एडमिन द्वारा बंद (Disabled) किया गया है।")
@@ -76,107 +73,51 @@ async def link_handler(Mbot, message):
     
     try:
         m = await message.reply_sticker("CAACAgUAAxkBAAITAmWEcdiJs9U2WtZXtWJlqVaI8diEAAIBAAPBJDExTOWVairA1m8eBA")
-        url = link.replace("instagram.com", "ddinstagram.com").replace("==", "%3D%3D")
         
-        if url.endswith("="):
-            dump_file = await message.reply_video(url[:-1], caption=default_caption)
-        else:
-            dump_file = await message.reply_video(url, caption=default_caption)
-            
-        if 'dump_file' in locals() and dump_file:
-            try: await dump_file.forward(DUMP_GROUP)
-            except: pass
-            
-        if m: await m.delete()
-        return 
+        # 🎯 मुख्य फिक्स: SaveIG API का उपयोग करके सीधे वीडियो यूआरएल निकालेंगे ताकि क्रैश न हो
+        meta_resp = await async_post("https://saveig.app/api/ajaxSearch", data={"q": link, "t": "media", "lang": "en"}, headers=headers)
         
-    except Exception:
-        try:
-            if "/reel/" in url:
-                ddinsta = True 
-                resp = await async_get(url)
-                soup = bs4.BeautifulSoup(resp.text, 'html.parser')
-                meta_tag = soup.find('meta', attrs={'property': 'og:video'})
-                
+        if meta_resp.ok:
+            res = meta_resp.json()
+            meta = re.findall(r'href="(https?://[^"]+)"', res['data'])
+            if meta:
+                content_value = meta[0]
                 try:
-                    content_value = f"https://ddinstagram.com{meta_tag['content']}"
-                except:
-                    content_value = None
-                    
-                if not meta_tag or not content_value:
-                    ddinsta = False
-                    meta_resp = await async_post("https://saveig.app/api/ajaxSearch", data={"q": link, "t": "media", "lang": "en"}, headers=headers)
-                 
-                    if meta_resp.ok:
-                        res = meta_resp.json()
-                        meta = re.findall(r'href="(https?://[^"]+)"', res['data']) 
-                        content_value = meta[0]
-                    else:
-                        if m: await m.delete()
-                        return await message.reply("❌ Oops, something went wrong with the API!")
-                
-                try:
+                    # सीधे टेलीग्राम सर्वर के ज़रिए वीडियो भेजें
                     dump_file = await message.reply_video(content_value, caption=default_caption)
-                except:
+                    if m: await m.delete()
+                    return
+                except Exception:
+                    # अगर टेलीग्राम डायरेक्ट यूआरएल फेच नहीं कर पाता, तो लोकल रैम में डाउनलोड करके भेजें
                     downfile = f"{os.getcwd()}/{random.randint(1, 10000000)}.mp4"
                     dl_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
                     file_resp = await async_get(content_value, headers=dl_headers)
                     with open(downfile, 'wb') as x:
                         x.write(file_resp.content)
-                    dump_file = await message.reply_video(downfile, caption=default_caption) 
                     
-            elif "/p/" in url:
-                meta_resp = await async_post("https://saveig.app/api/ajaxSearch", data={"q": link, "t": "media", "lang": "en"}, headers=headers)
-                if meta_resp.ok:
-                    res = meta_resp.json()
-                    meta = re.findall(r'href="(https?://[^"]+)"', res['data']) 
-                else:
+                    dump_file = await message.reply_video(downfile, caption=default_caption)
                     if m: await m.delete()
-                    return await message.reply("❌ Oops, something went wrong with the API!")
-                    
-                for i in range(len(meta)):
-                    com = await message.reply_text(meta[i])
-                    await asyncio.sleep(1)
-                    try:
-                        dump_file = await message.reply_video(com.text, caption=default_caption)
-                        await com.delete()
-                    except:
-                        pass 
-                        
-            elif "stories" in url:
-                meta_resp = await async_post("https://saveig.app/api/ajaxSearch", data={"q": link, "t": "media", "lang": "en"}, headers=headers)
-                if meta_resp.ok:
-                    res = meta_resp.json()
-                    meta = re.findall(r'href="(https?://[^"]+)"', res['data']) 
-                else:
-                    if m: await m.delete()
-                    return await message.reply("❌ Oops, something went wrong with the API!")
-                    
-                try:
-                    dump_file = await message.reply_video(meta[0], caption=default_caption)
-                except:
-                    com = await message.reply(meta[0])
-                    await asyncio.sleep(1)
-                    try:
-                        dump_file = await message.reply_video(com.text, caption=default_caption)
-                        await com.delete()
-                    except:
-                        pass
+                    return
 
-        except KeyError:
-            await message.reply("❌ 400: Sorry, unable to find it. Make sure it is publicly available :)")
-        except Exception as e:
-            if DUMP_GROUP:
-                try:
-                    await Mbot.send_message(DUMP_GROUP, f"⚠️ Instagram Error: {e}\nLink: {link}")
-                    await Mbot.send_message(DUMP_GROUP, f"<code>{traceback.format_exc()}</code>")
-                except:
-                    pass
-            await message.reply("❌ 400: Sorry, unable to download this media.")
+        # 🎯 बैकअप मेथड: अगर API काम न करे, तब नए वर्किंग डोमेन (igv.com) का उपयोग करें
+        url = link.replace("instagram.com", "igv.com").replace("==", "%3D%3D")
+        if url.endswith("="): url = url[:-1]
+        
+        dump_file = await message.reply_video(url, caption=default_caption)
+        if m: await m.delete()
+        
+    except Exception as e:
+        if DUMP_GROUP:
+            try:
+                await Mbot.send_message(DUMP_GROUP, f"⚠️ Instagram Error: {e}\nLink: {link}")
+                await Mbot.send_message(DUMP_GROUP, f"<code>{traceback.format_exc()}</code>")
+            except:
+                pass
+        await message.reply("❌ **Sorry, unable to download this media!** सुनिश्चित करें कि रील का अकाउंट पब्लिक है।")
 
     finally:
         if 'dump_file' in locals() and dump_file and DUMP_GROUP:
-            try: await dump_file.copy(DUMP_GROUP)
+            try: await dump_file.forward(DUMP_GROUP)
             except: pass
         if m:
             try: await m.delete()
