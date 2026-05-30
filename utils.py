@@ -16,7 +16,7 @@ class temp(object):
     START_TIME = 0
     BANNED_USERS, BANNED_CHATS = [], []
     ME, BOT, U_NAME, B_NAME = None, None, None, None
-    CANCEL = False # फालतू CANCEL वेरिएबल्स हटा दिए गए
+    CANCEL = False 
     ADMIN_TOKENS, ADMIN_SESSIONS, FILES, PM_FILES = {}, {}, {}, {}
 
 # ─────────────────────────────────────────────
@@ -29,7 +29,6 @@ def is_rate_limited(user_id, action, seconds):
     key = f"{user_id}:{action}"
     now = time.time()
     
-    # 🧹 Auto-Cleanup: अगर 1000 से ज़्यादा एंट्रीज़ हों, तो 1 घंटे पुरानी हटा दो
     if len(_rate_limits) > 1000:
         cutoff = now - 3600 
         for k in [k for k, v in _rate_limits.items() if v < cutoff]:
@@ -52,7 +51,6 @@ async def is_check_admin(bot, chat_id, user_id):
 # ─────────────────────────────────────────────
 # 💎 PREMIUM SYSTEM (Centralized & Crash-Proof)
 # ─────────────────────────────────────────────
-# ✅ FIX: bot पैरामीटर को डिफ़ॉल्ट रूप से None कर दिया गया है
 async def is_premium(user_id, bot=None):
     if not IS_PREMIUM or user_id in ADMINS: return True
     mp = await db.get_plan(user_id)
@@ -64,14 +62,27 @@ async def is_premium(user_id, bot=None):
             try: expire = datetime.strptime(expire, "%Y-%m-%d %H:%M:%S")
             except: expire = None
         
-        if not expire or expire < datetime.now():
-            # ✅ CRITICAL FIX: अगर bot None हुआ (जैसे बैकग्राउंड टास्क में) तो यहाँ क्रैश नहीं होगा
+        # ✅ FIX: टाइमज़ोन क्रैश से बचने के लिए समय को बिना टाइमज़ोन (Naive) फॉर्मेट में सिंक किया
+        now_ist = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+        if not expire or expire < now_ist:
             if bot:
                 try: 
                     await bot.send_message(user_id, f"❌ Your premium {mp.get('plan')} plan has expired.\n\nUse /plan to renew.")
                 except: pass
             
-            await db.update_plan(user_id, {"expire": "", "plan": "", "premium": False})
+            # प्रिमियम खत्म होने पर सारे रिमाइंडर फ्लैग्स को भी साफ़ करो
+            await db.update_plan(user_id, {
+                "expire": "", 
+                "plan": "", 
+                "premium": False,
+                "reminded_12h": False, 
+                "reminded_6h": False, 
+                "reminded_3h": False, 
+                "reminded_1h": False, 
+                "reminded_30m": False, 
+                "reminded_10m": False,
+                "last_reminder_id": 0
+            })
             return False
     return True
 
@@ -91,6 +102,7 @@ async def broadcast_messages(chat_id, message, pin=False, is_group=False):
     except Exception:
         if is_group:
             try:
+                # ✅ FIX: सीधे क्लास ऑब्जेक्ट की जगह सही कलेक्शन (db.groups) को कॉल किया
                 await db.groups.update_one(
                     {"id": int(chat_id)},
                     {"$set": {"chat_status": {"is_disabled": True, "reason": "Bot removed from group"}}}
@@ -104,7 +116,7 @@ async def broadcast_messages(chat_id, message, pin=False, is_group=False):
 # ⚙️ TTL CACHE FOR SETTINGS (High Performance)
 # ─────────────────────────────────────────────
 _settings_cache = {}
-_CACHE_TTL = 300 # 5 मिनट
+_CACHE_TTL = 300 
 
 async def get_settings(group_id):
     now = time.time()
@@ -142,7 +154,6 @@ def get_readable_time(seconds):
     return res or "0s"
 
 def get_wish():
-    # 🇮🇳 IST समय के अनुसार विश
     h = datetime.now(ZoneInfo("Asia/Kolkata")).hour
     return "ɢᴏᴏᴅ ᴍᴏʀɴɪɴɢ 🌞" if h < 12 else "ɢᴏᴏᴅ ᴀꜰᴛᴇʀɴᴏᴏɴ 🌗" if h < 18 else "ɢᴏᴏᴅ ᴇᴠᴇɴɪɴɢ 🌘"
 
