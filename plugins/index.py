@@ -4,7 +4,7 @@ import asyncio
 from hydrogram import Client, filters, enums
 from hydrogram.errors import FloodWait
 from info import ADMINS
-# ✅ Updated Import
+# ✅ मुख्य सिंक इम्पोर्ट
 from database.ia_filterdb import save_file
 from hydrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from utils import temp, get_readable_time
@@ -17,7 +17,7 @@ async def index_files(bot, query):
     ident = data_parts[1]
     
     if ident == 'yes':
-        # Show collection selection buttons (Direct Skip 0 comes here directly)
+        # कलेक्शन सिलेक्शन बटन दिखाएं (डेटाबेस के अनुसार सिंक)
         chat = data_parts[2]
         lst_msg_id = data_parts[3]
         skip = data_parts[4]
@@ -44,7 +44,7 @@ async def index_files(bot, query):
         )
         
     elif ident == 'ask_skip':
-        # Manual Skip Selection
+        # कस्टम स्किप सिलेक्शन
         chat = data_parts[2]
         lst_msg_id = data_parts[3]
         
@@ -53,11 +53,10 @@ async def index_files(bot, query):
         try:
             msg = await bot.listen(chat_id=query.message.chat.id, user_id=query.from_user.id)
             skip = int(msg.text)
-            await msg.delete() # delete user message
+            await msg.delete() # यूज़र का मैसेज डिलीट करें
         except:
             return await query.message.edit("❌ Invalid number or Timeout. Try again.")
             
-        # After getting skip, show collection buttons
         buttons = [
             [
                 InlineKeyboardButton('✅ PRIMARY', callback_data=f'index#start#{chat}#{lst_msg_id}#{skip}#primary'),
@@ -80,7 +79,6 @@ async def index_files(bot, query):
         )
     
     elif ident == 'start':
-        # Start indexing with selected collection
         chat = data_parts[2]
         lst_msg_id = data_parts[3]
         skip = data_parts[4]
@@ -92,7 +90,7 @@ async def index_files(bot, query):
         try:
             chat = int(chat)
         except:
-            chat = chat
+            pass
         
         await index_files_to_db(int(lst_msg_id), chat, msg, bot, int(skip), collection)
     
@@ -101,10 +99,9 @@ async def index_files(bot, query):
         await query.message.edit("Trying to cancel Indexing...")
 
 
-# Auto-index when forwarded message or channel link is sent
+# जब कोई फॉरवर्डेड मैसेज या चैनल लिंक भेजा जाए
 @Client.on_message(filters.private & filters.user(ADMINS) & (filters.forwarded | filters.text))
 async def auto_index(bot, message):
-    # Skip if it's a command or regular chat
     if message.text and not message.text.startswith("https://t.me"):
         if not message.forward_from_chat:
             return
@@ -112,12 +109,12 @@ async def auto_index(bot, message):
     if lock.locked():
         return await message.reply('⏳ Wait until previous indexing process completes.')
     
-    # Handle forwarded messages
+    # फॉरवर्डेड मैसेजेस को हैंडल करें
     if message.forward_from_chat and message.forward_from_chat.type == enums.ChatType.CHANNEL:
         last_msg_id = message.forward_from_message_id
         chat_id = message.forward_from_chat.username or message.forward_from_chat.id
     
-    # Handle channel links
+    # चैनल लिंक्स को हैंडल करें
     elif message.text and message.text.startswith("https://t.me"):
         try:
             msg_link = message.text.split("/")
@@ -138,7 +135,6 @@ async def auto_index(bot, message):
     if chat.type != enums.ChatType.CHANNEL:
         return await message.reply("⚠️ I can only index channels.")
 
-    # Show Initial Options (Direct Skip 0 OR Custom Skip)
     buttons = [
         [
             InlineKeyboardButton('⚡ START INDEXING (Skip 0)', callback_data=f'index#yes#{chat_id}#{last_msg_id}#0')
@@ -193,7 +189,7 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, skip, collection_type="p
                 
                 current += 1
                 
-                # Update progress every 50 messages (Less spam)
+                # स्पैम कम करने के लिए हर 50 मैसेज पर प्रोग्रेस अपडेट करें
                 if current % 50 == 0:
                     btn = [[
                         InlineKeyboardButton('CANCEL', callback_data=f'index#cancel#{chat}#{lst_msg_id}#{skip}')
@@ -233,20 +229,20 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, skip, collection_type="p
                     unsupported += 1
                     continue
                 
-                # Check file size - skip files under 2 MB
+                # फाइल साइज चेक करें - 2 MB से छोटी फाइलों को स्किप करें
                 file_size = getattr(media, 'file_size', 0)
-                if file_size < 2097152:  # 2 MB in bytes
+                if file_size < 2097152:  # बाइट्स में 2 MB
                     badfiles += 1
                     continue
                 
                 media.caption = message.caption
-                # ✅ Safe Name Cleaning (No Error)
+                # नाम को साफ़ और स्वच्छ करना (Safe Name Cleaning)
                 try:
-                    media.file_name = re.sub(r"@\w+|(_|\-|\.|\+)", " ", str(media.file_name))
+                    media.file_name = re.sub(r"@\w+|(_|\-|\.|\+)", " ", str(media.file_name)).strip()
                 except:
                     pass
                 
-                # Save to selected collection
+                # सिलेक्टेड कलेक्शन में सेव करें (अब ia_filterdb में यह शॉर्ट आईडी ऑटो-पैक करेगा)
                 sts = await save_file(media, collection_type=collection_type)
                 
                 if sts == 'suc':
