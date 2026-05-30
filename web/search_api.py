@@ -9,38 +9,11 @@ logger = logging.getLogger(__name__)
 search_routes = web.RouteTableDef()
 
 # ─────────────────────────────────────────────
-# 📸 THUMBNAIL CONCURRENCY & FLOOD LIMITER
+# 📸 THUMBNAIL CONCURRENCY & CACHE
 # ─────────────────────────────────────────────
 MAX_CACHE = 500
 thumb_cache = {}
-thumb_semaphore = asyncio.Semaphore(1) # Concurrency 1 फॉर सेफ्टी
-
-# ─────────────────────────────────────────────
-# 🚀 STABLE IMGBB API UPLOAD HELPER (No More 412 or DNS Errors)
-# ─────────────────────────────────────────────
-async def upload_to_cdn(image_bytes):
-    try:
-        # 🔥 यहाँ अपनी ImgBB से मिली हुई API Key पेस्ट कर दो भाई
-        IMGBB_API_KEY = "7231f7dc61edd1d358850564df301bf4" 
-        
-        if IMGBB_API_KEY == "YOUR_IMGBB_API_KEY" or not IMGBB_API_KEY:
-            logger.error("⚠️ [IMGBB ERROR] Please insert a valid ImgBB API Key!")
-            return None
-
-        form = aiohttp.FormData()
-        form.add_field('image', image_bytes, filename='thumb.jpg', content_type='image/jpeg')
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(f'https://api.imgbb.com/1/upload?key={IMGBB_API_KEY}', data=form, timeout=15) as resp:
-                if resp.status == 200:
-                    res_json = await resp.json()
-                    # ImgBB का डायरेक्ट और परमानेंट इमेज यूआरएल निकालें
-                    return res_json['data']['url']
-                else:
-                    logger.error(f"ImgBB API Error Status: {resp.status}")
-    except Exception as e:
-        logger.error(f"ImgBB Upload Exception: {e}")
-    return None
+thumb_semaphore = asyncio.Semaphore(1) 
 
 # ─────────────────────────────────────────────
 # 🔒 STRICT SECURITY: Telegram initData HMAC Verification
@@ -49,23 +22,14 @@ def verify_telegram_init_data(init_data: str) -> dict | None:
     try:
         parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
         received_hash = parsed.pop("hash", None)
-        if not received_hash:
-            return None
-
-        data_check_string = "\n".join(
-            f"{k}={v}" for k, v in sorted(parsed.items())
-        )
-
+        if not received_hash: return None
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
         secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
         expected_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-
-        if not hmac.compare_digest(expected_hash, received_hash):
-            return None
-
+        if not hmac.compare_digest(expected_hash, received_hash): return None
         user_str = parsed.get("user", "{}")
         return json.loads(user_str)
-    except Exception:
-        return None
+    except Exception: return None
 
 async def get_user_role(req):
     init_data = req.headers.get("X-Telegram-Init-Data", "").strip()
@@ -79,7 +43,6 @@ async def get_user_role(req):
                 from info import IS_PREMIUM
                 if not IS_PREMIUM: return "user", tg_id
         return None, None
-
     s_user = req.cookies.get("user_session")
     if s_user and hasattr(temp, "USER_SESSIONS"):
         session = temp.USER_SESSIONS.get(s_user, {})
@@ -95,19 +58,15 @@ async def get_user_role(req):
 @search_routes.get("/api/search")
 async def api_search(req):
     role, tg_id = await get_user_role(req)
-    if not role:
-        return web.json_response({"error": "Unauthorized Access! Admin or Premium only."}, status=403)
-    if is_rate_limited(tg_id, "web_search", 1):
-        return web.json_response({"error": "Searching too fast!"}, status=429)
+    if not role: return web.json_response({"error": "Unauthorized Access!"}, status=403)
+    if is_rate_limited(tg_id, "web_search", 1): return web.json_response({"error": "Searching too fast!"}, status=429)
 
     q = req.query.get("q", "").strip()
     off = req.query.get("offset", "0")
     col = req.query.get("col", "all").lower()
     mode = req.query.get("mode", "tg").lower()
 
-    if not q:
-        return web.json_response({"results": [], "total": 0, "next_offset": ""})
-
+    if not q: return web.json_response({"results": [], "total": 0, "next_offset": ""})
     try: off = max(0, int(off))
     except: off = 0
 
@@ -120,8 +79,7 @@ async def api_search(req):
     async def get_col_count(name, collection):
         count = await collection.count_documents(flt_text)
         active_flt = flt_text if count > 0 else flt_regex
-        if count == 0:
-            count = await collection.count_documents(active_flt)
+        if count == 0: count = await collection.count_documents(active_flt)
         return name, count, active_flt
 
     count_results = await asyncio.gather(*(get_col_count(n, c) for n, c in tgt_cols.items()))
@@ -150,7 +108,7 @@ async def api_search(req):
         file_name = d.get("file_name", "Unknown File")
         db_thumb = d.get("thumb_url")
         
-        if db_thumb and ("default-movie" in db_thumb or "placehold" in db_thumb):
+        if db_thumb and ("default-movie" in db_thumb or "placehold" in db_thumb or "ibb.co" in db_thumb):
             db_thumb = None
 
         tg_thumb = db_thumb if db_thumb else f"/api/thumb?file_id={db_id}"
@@ -177,42 +135,44 @@ async def api_search(req):
     })
 
 # ─────────────────────────────────────────────
-# 📸 THUMBNAIL API (ImgBB Version with Logs)
+# 📸 THUMBNAIL API (Native Telegram System)
 # ─────────────────────────────────────────────
 @search_routes.get("/api/thumb")
 async def get_telegram_thumb(req):
     fid = req.query.get("file_id")
     is_retry = req.query.get("retry", "false").lower() == "true"
-    if not fid:
-        return web.Response(status=400)
+    if not fid: return web.Response(status=400)
 
     headers = {"Content-Disposition": 'inline; filename="poster.jpg"'}
     
     if is_retry and fid in thumb_cache:
-        if thumb_cache[fid] == "NO_THUMB":
-            thumb_cache.pop(fid, None)
+        if thumb_cache[fid] == "NO_THUMB": thumb_cache.pop(fid, None)
 
     if fid in thumb_cache:
-        if thumb_cache[fid] == "NO_THUMB":
-            return web.Response(status=404)
+        if thumb_cache[fid] == "NO_THUMB": return web.Response(status=404)
         return web.Response(body=thumb_cache[fid], content_type="image/jpeg", headers=headers)
 
     async with thumb_semaphore:
         if fid in thumb_cache and thumb_cache[fid] != "NO_THUMB":
             return web.Response(body=thumb_cache[fid], content_type="image/jpeg", headers=headers)
 
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.3)
 
         for attempt in range(3):
             try:
-                # 🔍 लॉग 1: डेटाबेस हिट चेक
+                # 🔍 1. DB चेक: अगर टेलीग्राम परमानेंट लिंक पहले से है
                 for col_name, col in COLLECTIONS.items():
                     existing = await col.find_one({"$or": [{"_id": fid}, {"file_ref": fid}]})
-                    if existing and existing.get("thumb_url") and ("imgbb.com" in existing.get("thumb_url") or "ibb.co" in existing.get("thumb_url")):
-                        logger.info(f"✨ [DB HIT] File ID: {fid} | Already has ImgBB Link: {existing.get('thumb_url')}")
-                        raise web.HTTPFound(existing.get("thumb_url"))
+                    if existing and existing.get("thumb_url") and existing.get("thumb_url").startswith("TG_ID:"):
+                        saved_thumb_id = existing.get("thumb_url").replace("TG_ID:", "")
+                        logger.info(f"✨ [DB HIT] Serving via internal Telegram ID for: {fid}")
+                        file_data = await temp.BOT.download_media(saved_thumb_id, in_memory=True)
+                        thumb_bytes = file_data.getvalue()
+                        thumb_cache[fid] = thumb_bytes
+                        return web.Response(body=thumb_bytes, content_type="image/jpeg", headers=headers)
 
-                logger.info(f"📥 [TG FETCH] Fetching from Telegram for File ID: {fid} (Attempt {attempt+1})")
+                # 📥 2. टेलीग्राम से मंगाओ
+                logger.info(f"📥 [TG FETCH] Fetching from Telegram for File ID: {fid}")
                 msg = await temp.BOT.send_cached_media(chat_id=BIN_CHANNEL, file_id=fid)
                 thumb_id = None
                 
@@ -221,56 +181,40 @@ async def get_telegram_thumb(req):
                 elif msg.document and msg.document.thumbs and len(msg.document.thumbs) > 0:
                     thumb_id = msg.document.thumbs[0].file_id
 
-                if thumb_id and thumb_id != "None":
+                if thumb_id:
                     file_data = await temp.BOT.download_media(thumb_id, in_memory=True)
                     thumb_bytes = file_data.getvalue()
-                    
-                    if len(thumb_cache) >= MAX_CACHE:
-                        oldest_key = next(iter(thumb_cache))
-                        thumb_cache.pop(oldest_key, None)
-                        
                     thumb_cache[fid] = thumb_bytes
                     
-                    # 🚀 ImgBB अपलोड शुरू
-                    logger.info(f"📤 [CDN UPLOAD] Sending bytes to ImgBB for File ID: {fid}...")
-                    perm_thumb_url = await upload_to_cdn(thumb_bytes)
+                    # ✅ डायरेक्ट सेविंग: बिना किसी थर्ड पार्टी वेबसाइट के सीधा DB में लॉक करें
+                    db_save_value = f"TG_ID:{thumb_id}"
+                    updated_count = 0
+                    for col_name, col in COLLECTIONS.items():
+                        res = await col.update_many(
+                            {"$or": [{"_id": fid}, {"file_ref": fid}]},
+                            {"$set": {"thumb_url": db_save_value}}
+                        )
+                        updated_count += res.modified_count
                     
-                    # ✅ लॉग 2: सक्सेस चेक
-                    if perm_thumb_url and "imgbb.com" in perm_thumb_url:
-                        logger.info(f"🟢 [CDN SUCCESS] Saved successfully on ImgBB! URL: {perm_thumb_url}")
-                        
-                        updated_count = 0
-                        for col_name, col in COLLECTIONS.items():
-                            res = await col.update_many(
-                                {"$or": [{"_id": fid}, {"file_ref": fid}]},
-                                {"$set": {"thumb_url": perm_thumb_url}}
-                            )
-                            updated_count += res.modified_count
-                        
-                        logger.info(f"💾 [MONGODB SAVE] Successfully locked in {updated_count} DB documents for File ID: {fid}")
-                    else:
-                        logger.error(f"🔴 [CDN FAILED] ImgBB rejected image upload for File ID: {fid}!")
-                    
+                    logger.info(f"💾 [NATIVE SAVE] Successfully locked in DB documents ({updated_count}) for File ID: {fid}")
                     asyncio.create_task(msg.delete())
                     return web.Response(body=thumb_bytes, content_type="image/jpeg", headers=headers)
                 else:
-                    logger.warning(f"🚫 [NO THUMB] This file has no embedded thumbnail: {fid}")
+                    logger.warning(f"🚫 [NO THUMB] No embedded thumb: {fid}")
                     thumb_cache[fid] = "NO_THUMB"
                     asyncio.create_task(msg.delete())
                     return web.Response(status=404)
 
-            except web.HTTPFound as hf:
-                raise hf
             except Exception as e:
                 err_text = str(e)
                 if "FLOOD_WAIT" in err_text or "420" in err_text:
                     match = re.search(r'wait of (\d+) second', err_text)
-                    wait_time = int(match.group(1)) if match else 30
-                    logger.warning(f"⏳ [FLOOD WAIT] Telegram says sleep for {wait_time}s on File ID: {fid}")
+                    wait_time = int(match.group(1)) if match else 20
+                    logger.warning(f"⏳ [FLOOD WAIT] Waiting {wait_time}s...")
                     await asyncio.sleep(wait_time + 2)
                     continue
                 
-                logger.error(f"❌ [CRITICAL ERROR] Failed during processing File ID {fid}: {e}")
+                logger.error(f"❌ [ERROR] Processing failed: {e}")
                 return web.Response(status=429)
         
         return web.Response(status=429)
