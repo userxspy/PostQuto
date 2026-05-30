@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # IMPORTS
 # ==========================================================
 from aiohttp import web
-from hydrogram import Client, types, StopPropagation 
+from hydrogram import Client, types, StopPropagation, idle  # ✅ FIX: idle को इम्पोर्ट किया
 from hydrogram.errors import FloodWait 
 from hydrogram.handlers import MessageHandler 
 from web import web_app
@@ -50,7 +50,6 @@ from plugins.premium import check_premium_expired
 # ==========================================================
 # 🛠️ HEALTH CHECK ENDPOINT (Koyeb Optimized)
 # ==========================================================
-# Koyeb के लिए explicit health endpoint जोड़ा गया
 routes = web.RouteTableDef()
 
 @routes.get("/health")
@@ -86,8 +85,9 @@ class Bot(Client):
         # 3. Load banned users & chats (Safe Loading)
         try:
             b_users, b_chats = await db.get_banned()
-            temp.BANNED_USERS = b_users
-            temp.BANNED_CHATS = b_chats
+            # ✅ FIX: क्रेडेंशियल्स को नंबर (int) फॉर्मेट में सुरक्षित स्टोर किया
+            temp.BANNED_USERS = [int(x) for x in b_users]
+            temp.BANNED_CHATS = [int(x) for x in b_chats]
             logger.info(f"✅ Loaded {len(b_users)} banned users and {len(b_chats)} banned chats")
         except Exception as e:
             logger.error(f"Error loading banned list: {e}")
@@ -96,7 +96,7 @@ class Bot(Client):
         async def ban_check_middleware(client, message):
             uid = message.from_user.id if message.from_user else None
             cid = message.chat.id if message.chat else None
-            if (uid and uid in temp.BANNED_USERS) or (cid and cid in temp.BANNED_CHATS):
+            if (uid and int(uid) in temp.BANNED_USERS) or (cid and int(cid) in temp.BANNED_CHATS):
                 raise StopPropagation
         
         self.add_handler(MessageHandler(ban_check_middleware), group=-1)
@@ -113,7 +113,8 @@ class Bot(Client):
             except Exception as e:
                 logger.error(f"Restart message error: {e}")
             finally:
-                os.remove("restart.txt")
+                try: os.remove("restart.txt")
+                except: pass
 
         # 6. Set Bot Identity
         temp.BOT = self
@@ -123,7 +124,6 @@ class Bot(Client):
         temp.B_NAME = me.first_name
 
         # 7. Start Web Server with Health Routes
-        # Health routes को web_app में रजिस्टर किया गया
         web_app.add_routes(routes)
         self._runner = web.AppRunner(web_app, access_log=None)
         await self._runner.setup()
@@ -164,8 +164,7 @@ class Bot(Client):
 
         logger.info(f"@{me.username} is Online & Ready!")
 
-    # ✅ GRACEFUL SHUTDOWN (Premium Task Await)
-    # प्रीमियम टास्क को सुरक्षित रूप से बंद करने के लिए await जोड़ा गया
+    # ✅ GRACEFUL SHUTDOWN
     async def stop(self, *args):
         if getattr(self, '_runner', None):
             await self._runner.cleanup()
@@ -174,7 +173,7 @@ class Bot(Client):
         if getattr(self, '_premium_task', None):
             self._premium_task.cancel()
             try:
-                await self._premium_task # Await for cleanup
+                await self._premium_task 
             except asyncio.CancelledError:
                 pass
             logger.info("✅ Premium Task Safely Stopped")
@@ -203,15 +202,10 @@ async def main():
     bot = Bot()
     await bot.start()
     
-    loop = asyncio.get_running_loop()
-    stop_event = asyncio.Event()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, stop_event.set)
-        except NotImplementedError:
-            pass 
-
-    await stop_event.wait()
+    # ✅ FIX: बोट को बैकग्राउंड में २४/७ बिना बंद हुए चालू रखने के लिए idle() लॉक कर दिया
+    await idle()
+    
+    # जब बोट बंद किया जाएगा तब ग्रेसफुल स्टॉप ट्रिगर होगा
     await bot.stop()
 
 if __name__ == "__main__":
