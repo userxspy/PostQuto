@@ -67,7 +67,7 @@ async def db_count_documents():
         return {"primary": 0, "cloud": 0, "archive": 0, "total": 0}
 
 # ─────────────────────────────────────────────────────────
-# 💾 SAVE FILE
+# 💾 SAVE FILE (Updated for Telegraph CDN Caching)
 # ─────────────────────────────────────────────────────────
 async def save_file(media, collection_type="primary"):
     try:
@@ -81,6 +81,8 @@ async def save_file(media, collection_type="primary"):
 
         file_type = type(media).__name__.lower()
 
+        # ✅ यहाँ 'thumb_url' को डिफ़ॉल्ट रूप से None रख रहे हैं 
+        # ताकि हमारा नया search_api इसमें सीधे Telegraph का परमानेंट लिंक इंजेक्ट कर सके
         doc = {
             "_id":       file_id,     
             "file_ref":  media.file_id, 
@@ -88,9 +90,17 @@ async def save_file(media, collection_type="primary"):
             "file_size": media.file_size,
             "caption":   caption,
             "file_type": file_type,   
+            "thumb_url": None  
         }
 
         col    = COLLECTIONS.get(collection_type, primary)
+        
+        # यदि फ़ाइल पहले से मौजूद है, तो हम उसकी पुरानी thumb_url को नष्ट होने से बचाएंगे 
+        # (अगर वह पहले से ही एक वैध telegra.ph लिंक है)
+        existing_doc = await col.find_one({"_id": file_id})
+        if existing_doc and existing_doc.get("thumb_url") and "telegra.ph" in existing_doc.get("thumb_url"):
+            doc["thumb_url"] = existing_doc["thumb_url"]
+
         result = await col.replace_one({"_id": file_id}, doc, upsert=True)
 
         if result.matched_count > 0:
@@ -127,7 +137,6 @@ def _build_regex(query: str):
 async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None):
     
     # 1. ⚡ सुपरफास्ट Text Search (Strict AND Logic)
-    # हर शब्द को Quotes (") में डाल रहे हैं ताकि सटीक मैच ही मिले
     clean_query = raw_query.replace('"', '').replace("'", "")
     strict_query = " ".join(f'"{word}"' for word in clean_query.split())
 
@@ -139,7 +148,6 @@ async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None
     count = await col.count_documents(text_flt)
     
     if count > 0:
-        # अगर इंडेक्स से रिज़ल्ट मिला, तो सबसे अच्छी मैचिंग (Relevance Score) को ऊपर रखो
         async def _fetch_text():
             cursor = col.find(text_flt, {"score": {"$meta": "textScore"}})
             cursor.sort([("score", {"$meta": "textScore"})])
@@ -150,7 +158,7 @@ async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None
             return docs
         return await _fetch_text(), count
 
-    # 2. 🐢 Fallback to Regex (अगर यूज़र ने आधा शब्द लिखा हो, जैसे "Aveng")
+    # 2. 🐢 Fallback to Regex
     if USE_CAPTION_FILTER:
         reg_flt = {"$or": [{"file_name": regex}, {"caption": regex}]}
     else:
@@ -223,7 +231,6 @@ async def get_web_search_results(query, offset=0, limit=20):
         
     raw_query = str(query).strip()
     
-    # ✅ यहाँ भी Strict AND Logic लगा दिया
     clean_query = raw_query.replace('"', '').replace("'", "")
     strict_query = " ".join(f'"{word}"' for word in clean_query.split())
     
