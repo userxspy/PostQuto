@@ -20,7 +20,6 @@ watch_tmplt = """<!DOCTYPE html>
 --box:#000; --box-bd:rgba(255,255,255,.08); 
 --btn-c:rgba(255,255,255,.08); --btn-bd:rgba(255,255,255,.1); --txt-muted:#b3b3b3;
 }}
-/* ✅ थीम को वेब पैनल के साथ मैच किया गया है (.light) */
 html.light{{
 --bg1:#f8f9fa; --bg2:#e9ecef; --txt:#121212; 
 --nav1:rgba(255,255,255,.95); --nav2:rgba(255,255,255,.4); 
@@ -30,12 +29,9 @@ html.light{{
 *{{margin:0;padding:0;box-sizing:border-box;}}
 body{{background:linear-gradient(to bottom,var(--bg1),var(--bg2));font-family:'DM Sans',sans-serif;color:var(--txt);min-height:100vh;transition:background .3s,color .3s;}}
 .navbar{{width:100%;padding:16px 4%;display:flex;align-items:center;justify-content:space-between;position:fixed;top:0;z-index:999;background:linear-gradient(to bottom,var(--nav1),var(--nav2),transparent);backdrop-filter:blur(6px);transition:background .3s;}}
-
-/* ✅ लोगो को वेब पैनल के लोगो से मैच किया गया है */
 .logo{{font-size:24px;font-weight:900;letter-spacing:1px;color:var(--red);display:flex;align-items:center;gap:8px;text-decoration:none;transition:.3s;}}
 .logo:hover{{transform:scale(1.02);}}
 .nf-icon{{background:var(--red);color:#fff;padding:2px 7px;border-radius:3px;font-size:24px;line-height:1;}}
-
 .theme-btn{{background:transparent;border:1px solid var(--box-bd);color:var(--txt);padding:7px 16px;border-radius:4px;font-family:'DM Sans',sans-serif;font-weight:700;font-size:13px;cursor:pointer;transition:.3s;}}
 .theme-btn:hover{{background:var(--btn-c);}}
 .hero-container{{width:100%;max-width:1350px;margin:auto;padding:110px 20px 40px;}}
@@ -80,7 +76,6 @@ html.light .skip-ripple{{background:rgba(0,0,0,.1);}}
 
 <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
 <script>
-// ✅ THEME TOGGLE LOGIC (Synced with Main Web Panel)
 const docEl=document.documentElement, themeBtn=document.getElementById('theme-btn');
 if(localStorage.getItem('theme')==='light') docEl.classList.add('light');
 themeBtn.addEventListener('click',()=>{{
@@ -88,10 +83,8 @@ themeBtn.addEventListener('click',()=>{{
     localStorage.setItem('theme', isLight ? 'light' : 'dark');
 }});
 
-// PLAYER INITIALIZATION
 const player=new Plyr('#player',{{controls:['play-large','play','progress','current-time','mute','settings','pip','fullscreen'],settings:['quality','speed'],autoplay:!1,doubleClick:{{togglesFullscreen:!1}}}});
 
-// AUTO LANDSCAPE ON FULLSCREEN
 player.on('enterfullscreen', ()=>{{
     if(screen.orientation && screen.orientation.lock) {{
         screen.orientation.lock('landscape').catch(e => console.log(e));
@@ -103,7 +96,6 @@ player.on('exitfullscreen', ()=>{{
     }}
 }});
 
-// MULTI-TAP SKIP LOGIC
 player.on('ready',()=>{{
     const c=document.querySelector('.plyr'), l=document.createElement('div'), r=document.createElement('div');
     l.className='skip-zone left'; r.className='skip-zone right';
@@ -129,7 +121,6 @@ player.on('ready',()=>{{
     l.addEventListener('pointerup',e=>tap(e,'l',l)); r.addEventListener('pointerup',e=>tap(e,'r',r));
 }});
 
-// COPY LINK LOGIC
 function copyLink(){{navigator.clipboard.writeText("{src}"); let t=document.getElementById("toast"); t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),3000);}}
 </script>
 </body></html>"""
@@ -152,7 +143,7 @@ async def media_watch(message_id):
             fn = html.escape(getattr(media, 'file_name', "Fast Finder Movie"))
             return watch_tmplt.format(heading=f"Watch {fn}", file_name=fn, src=src, mime_type=mime)
         
-        # ✅ FIX: f-string के अंदर मौजूद CSS कर्ली ब्रेसेस को डबल {{}} किया गया ताकि KeyError न आए
+        # ✅ FIX: f-string का कर्ली ब्रेस {{}} डबल किया ताकि पायथन KeyError न फेंके
         return f'<body style="background:#000;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:\'DM Sans\',sans-serif;"><div style="text-align:center;background:#141414;padding:40px;border-radius:12px;border:1px solid rgba(255,255,255,.08);"><h2>⚠️ Unsupported File</h2><br><a href="{src}" style="background:#e50914;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Download Direct</a></div></body>'
 
     except Exception as e:
