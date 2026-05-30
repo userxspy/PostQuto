@@ -12,4 +12,3 @@ pytz
 pyromod
 pymongo
 google-genai
-beautifulsoup4
