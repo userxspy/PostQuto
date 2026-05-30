@@ -13,8 +13,7 @@ search_routes = web.RouteTableDef()
 # ─────────────────────────────────────────────
 MAX_CACHE = 500
 thumb_cache = {}
-# ✅ FIX 1: Concurrency को 4 से घटाकर 1 किया ताकि टेलीग्राम पर एक साथ लोड न पड़े
-thumb_semaphore = asyncio.Semaphore(1)
+thumb_semaphore = asyncio.Semaphore(1) # कतार को 1 किया ताकि एक-एक करके सेफ डाउनलोड हो
 
 # ─────────────────────────────────────────────
 # 🚀 TELEGRAPH UPLOAD HELPER (Best Approach)
@@ -38,10 +37,6 @@ async def upload_to_telegraph(image_bytes):
 # 🔒 STRICT SECURITY: Telegram initData HMAC Verification
 # ─────────────────────────────────────────────
 def verify_telegram_init_data(init_data: str) -> dict | None:
-    """
-    Telegram WebApp का initData verify करता है।
-    Returns: user dict अगर valid है, वरना None।
-    """
     try:
         parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
         received_hash = parsed.pop("hash", None)
@@ -60,47 +55,33 @@ def verify_telegram_init_data(init_data: str) -> dict | None:
 
         user_str = parsed.get("user", "{}")
         return json.loads(user_str)
-
     except Exception:
         return None
 
-# ─────────────────────────────────────────────
-# 🔒 AUTHENTICATION: Check Admin / Premium status
-# ─────────────────────────────────────────────
 async def get_user_role(req):
-    # 1️⃣ पहले Telegram initData check करो (Mini App के लिए)
     init_data = req.headers.get("X-Telegram-Init-Data", "").strip()
     if init_data:
         user = verify_telegram_init_data(init_data)
         if user:
             tg_id = int(user.get("id", 0))
             if tg_id:
-                if tg_id in ADMINS:
-                    return "admin", tg_id
-                if await is_premium(tg_id):
-                    return "user", tg_id
-                
-                # Check global premium flag
+                if tg_id in ADMINS: return "admin", tg_id
+                if await is_premium(tg_id): return "user", tg_id
                 from info import IS_PREMIUM
-                if not IS_PREMIUM:
-                    return "user", tg_id
+                if not IS_PREMIUM: return "user", tg_id
         return None, None
 
-    # 2️⃣ Cookie session check करो (Web browser login के लिए)
     s_user = req.cookies.get("user_session")
     if s_user and hasattr(temp, "USER_SESSIONS"):
         session = temp.USER_SESSIONS.get(s_user, {})
         if session.get("expiry", 0) > time.time():
             tg_id = session["tg_id"]
-            if tg_id in ADMINS:
-                return "admin", tg_id
-            if await is_premium(tg_id):
-                return "user", tg_id
-
+            if tg_id in ADMINS: return "admin", tg_id
+            if await is_premium(tg_id): return "user", tg_id
     return None, None
 
 # ─────────────────────────────────────────────
-# 🔍 SEARCH API (TMDb Removed)
+# 🔍 SEARCH API (Fixed ID Mapping)
 # ─────────────────────────────────────────────
 @search_routes.get("/api/search")
 async def api_search(req):
@@ -118,10 +99,8 @@ async def api_search(req):
     if not q:
         return web.json_response({"results": [], "total": 0, "next_offset": ""})
 
-    try:
-        off = max(0, int(off))
-    except (ValueError, TypeError):
-        off = 0
+    try: off = max(0, int(off))
+    except: off = 0
 
     flt_text = {"$text": {"$search": q}}
     flt_regex = {"file_name": re.compile(re.escape(q), re.IGNORECASE)}
@@ -144,34 +123,32 @@ async def api_search(req):
 
     remaining_skip = off
     for n, c in tgt_cols.items():
-        if len(all_m) >= lim:
-            break
+        if len(all_m) >= lim: break
         count = col_counts[n]
-        if count == 0:
-            continue
+        if count == 0: continue
         if remaining_skip >= count:
             remaining_skip -= count
             continue
         local_limit = lim - len(all_m)
         docs = await c.find(col_filters[n]).sort("_id", -1).skip(remaining_skip).limit(local_limit).to_list(length=local_limit)
-        for d in docs:
-            d["source_col"] = n.lower()
+        for d in docs: d["source_col"] = n.lower()
         all_m.extend(docs)
         remaining_skip = 0
 
     async def process_doc(d):
         fid = d.get("file_ref", d.get("file_id"))
+        db_id = d.get("_id") # डेटाबेस की असली यूनिक शॉर्ट आईडी
         file_name = d.get("file_name", "Unknown File")
         db_thumb = d.get("thumb_url")
         
-        # ✅ FIX: अगर डेटाबेस में पुरानी imgbb या कोई खराब लिंक सेव है, तो उसे इग्नोर करें
         if db_thumb and ("ibb.co" in db_thumb or "default-movie" in db_thumb or "placehold" in db_thumb):
             db_thumb = None
 
-        tg_thumb = db_thumb if db_thumb else f"/api/thumb?file_id={fid}"
+        # ✅ FIX: थंबनेल रिक्वेस्ट के लिए हमेशा 'db_id' भेजें, लंबी टेलीग्राम आईडी नहीं!
+        tg_thumb = db_thumb if db_thumb else f"/api/thumb?file_id={db_id}"
         
         return {
-            "file_id": fid,
+            "file_id": db_id, # फ्रंटएंड को यूनिक शॉर्ट आईडी पास करें
             "name": file_name,
             "size": get_size(d.get("file_size", 0)),
             "type": d.get("file_type", "document").upper(),
@@ -184,7 +161,6 @@ async def api_search(req):
         }
 
     results_list = await asyncio.gather(*(process_doc(d) for d in all_m))
-
     return web.json_response({
         "results": list(results_list),
         "total": tot,
@@ -193,11 +169,11 @@ async def api_search(req):
     })
 
 # ─────────────────────────────────────────────
-# 📸 OPTIMIZED THUMBNAIL API (With Reload & Flood Protection)
+# 📸 Thumnail API (Detailed Caching Logs Added)
 # ─────────────────────────────────────────────
 @search_routes.get("/api/thumb")
 async def get_telegram_thumb(req):
-    fid = req.query.get("file_id")
+    fid = req.query.get("file_id") # MongoDB की यूनिक आईडी
     is_retry = req.query.get("retry", "false").lower() == "true"
     if not fid:
         return web.Response(status=400)
@@ -208,28 +184,31 @@ async def get_telegram_thumb(req):
         if thumb_cache[fid] == "NO_THUMB":
             thumb_cache.pop(fid, None)
 
-    # 1. मेमोरी कैशे चेक करें
     if fid in thumb_cache:
         if thumb_cache[fid] == "NO_THUMB":
             return web.Response(status=404)
         return web.Response(body=thumb_cache[fid], content_type="image/jpeg", headers=headers)
 
-    # सख्त कतार (Strict Queue): एक बार में सिर्फ एक रिक्वेस्ट अंदर जाएगी
     async with thumb_semaphore:
         if fid in thumb_cache and thumb_cache[fid] != "NO_THUMB":
             return web.Response(body=thumb_cache[fid], content_type="image/jpeg", headers=headers)
 
-        # बोट को रेट लिमिट से बचाने के लिए सेमाफोर के अंदर हर बार थोड़ा सा गैप (0.5s Delay) दें
         await asyncio.sleep(0.5)
 
-        # रीट्राई लूप ताकि अगर फ्लड आए तो बोट खुद रुककर दोबारा कोशिश करे
         for attempt in range(3):
             try:
-                # 2. टेलीग्राम बोट से मीडिया मंगाएं
+                # 🔍 लॉग 1: डेटाबेस में पहले से लिंक मौजूद है या नहीं, इसकी जांच
+                for col_name, col in COLLECTIONS.items():
+                    existing = await col.find_one({"$or": [{"_id": fid}, {"file_ref": fid}]})
+                    if existing and existing.get("thumb_url") and "telegra.ph" in existing.get("thumb_url"):
+                        logger.info(f"✨ [DB HIT] File ID: {fid} | Already has Telegraph Link: {existing.get('thumb_url')}")
+                        raise web.HTTPFound(existing.get("thumb_url"))
+
+                # अगर DB में नहीं है, तो टेलीग्राम से मंगाओ
+                logger.info(f"📥 [TG FETCH] Fetching from Telegram for File ID: {fid} (Attempt {attempt+1})")
                 msg = await temp.BOT.send_cached_media(chat_id=BIN_CHANNEL, file_id=fid)
                 thumb_id = None
                 
-                # ✅ FIX 2: पहले सुनिश्चित करें कि thumbs लिस्ट मौजूद है और खाली नहीं है
                 if msg.video and msg.video.thumbs and len(msg.video.thumbs) > 0:
                     thumb_id = msg.video.thumbs[0].file_id
                 elif msg.document and msg.document.thumbs and len(msg.document.thumbs) > 0:
@@ -245,120 +224,99 @@ async def get_telegram_thumb(req):
                         
                     thumb_cache[fid] = thumb_bytes
                     
-                    # Telegraph पर अपलोड करने का प्रयास
+                    # 🚀 टेलीग्राफ पर अपलोड शुरू
+                    logger.info(f"📤 [TELEGRAPH UPLOAD] Sending bytes to Telegraph for File ID: {fid}...")
                     perm_thumb_url = await upload_to_telegraph(thumb_bytes)
+                    
+                    # ✅ लॉग 2: टेलीग्राफ पर डेटा सेव हुआ कि नहीं, इसकी पूरी जांच
                     if perm_thumb_url and "telegra.ph" in perm_thumb_url:
+                        logger.info(f"🟢 [TELEGRAPH SUCCESS] Saved successfully on Telegraph! URL: {perm_thumb_url}")
+                        
+                        # MongoDB में हमेशा के लिए लॉक करना
+                        updated_count = 0
                         for col_name, col in COLLECTIONS.items():
-                            await col.update_many(
-                                {"file_ref": fid},
+                            res = await col.update_many(
+                                {"$or": [{"_id": fid}, {"file_ref": fid}]},
                                 {"$set": {"thumb_url": perm_thumb_url}}
                             )
-                        logger.info(f"🎉 Thumb Cache OK & Saved in DB: {fid}")
+                            updated_count += res.modified_count
+                        
+                        logger.info(f"💾 [MONGODB SAVE] Successfully locked in {updated_count} DB documents for File ID: {fid}")
+                    else:
+                        logger.error(f"🔴 [TELEGRAPH FAILED] Telegraph rejected image upload for File ID: {fid}!")
                     
                     asyncio.create_task(msg.delete())
                     return web.Response(body=thumb_bytes, content_type="image/jpeg", headers=headers)
                 else:
+                    logger.warning(f"🚫 [NO THUMB] This file has no embedded thumbnail: {fid}")
                     thumb_cache[fid] = "NO_THUMB"
                     asyncio.create_task(msg.delete())
                     return web.Response(status=404)
 
-            # ✅ FIX 3: FloodWait एरर को यहीं पकड़कर बोट को लाइव सुला (Sleep) देंगे
+            except web.HTTPFound as hf:
+                raise hf
             except Exception as e:
                 err_text = str(e)
                 if "FLOOD_WAIT" in err_text or "420" in err_text:
                     match = re.search(r'wait of (\d+) second', err_text)
                     wait_time = int(match.group(1)) if match else 30
-                    
-                    logger.warning(f"⏳ Telegram FloodWait Detected! Sleeping for {wait_time}s on attempt {attempt+1}/3...")
-                    # बोट क्रैश होने की जगह चुपचाप उतने सेकंड का इंतज़ार करेगा
+                    logger.warning(f"⏳ [FLOOD WAIT] Telegram says sleep for {wait_time}s on File ID: {fid}")
                     await asyncio.sleep(wait_time + 2)
-                    continue # दोबारा लूप चलाकर फिर से ट्राई करेगा
+                    continue
                 
-                logger.error(f"❌ Telegram Error: {e}")
+                logger.error(f"❌ [CRITICAL ERROR] Failed during processing File ID {fid}: {e}")
                 return web.Response(status=429)
         
-        # अगर 3 बार कोशिश करने के बाद भी फ्लड नहीं हटा
         return web.Response(status=429)
 
 async def _auto_del_msg(msg, delay):
     await asyncio.sleep(delay)
-    try:
-        await msg.delete()
-    except Exception:
-        pass
+    try: await msg.delete()
+    except: pass
 
-# ─────────────────────────────────────────────
-# ▶️ STREAM SETUP
-# ─────────────────────────────────────────────
 @search_routes.get("/setup_stream")
 async def setup_stream(req):
     role, _ = await get_user_role(req)
-    if not role:
-        return web.Response(text="❌ Unauthorized! Premium Required.", status=403)
+    if not role: return web.Response(text="❌ Unauthorized!", status=403)
     fid = req.query.get("file_id")
     mode = req.query.get("mode", "watch")
-    if not fid:
-        return web.Response(text="❌ Missing file_id!", status=400)
+    if not fid: return web.Response(text="❌ Missing file_id!", status=400)
     try:
         msg = await temp.BOT.send_cached_media(chat_id=BIN_CHANNEL, file_id=fid)
         asyncio.create_task(_auto_del_msg(msg, 3600))
         return web.HTTPFound(f"/{'download' if mode == 'download' else 'watch'}/{msg.id}")
-    except Exception as e:
-        return web.Response(text=f"❌ Error: {e}", status=500)
+    except Exception as e: return web.Response(text=f"❌ Error: {e}", status=500)
 
-# ─────────────────────────────────────────────
-# 🗑️ DELETE & EDIT APIs
-# ─────────────────────────────────────────────
 @search_routes.post("/api/delete")
 async def api_delete(req):
     role, _ = await get_user_role(req)
-    if role != "admin":
-        return web.json_response({"error": "Admin only!"}, status=403)
+    if role != "admin": return web.json_response({"error": "Admin only!"}, status=403)
     try:
         data = await req.json()
         col = data.get("collection", "primary").lower()
-        if col not in COLLECTIONS:
-            return web.json_response({"error": "Invalid collection!"}, status=400)
-        res = await COLLECTIONS[col].delete_one(
-            {"$or": [{"file_id": data.get("file_id")}, {"file_ref": data.get("file_id")}]}
-        )
+        if col not in COLLECTIONS: return web.json_response({"error": "Invalid collection!"}, status=400)
+        res = await COLLECTIONS[col].delete_one({"$or": [{"file_id": data.get("file_id")}, {"file_ref": data.get("file_id")}]})
         return web.json_response({"success": bool(res.deleted_count)})
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
+    except Exception as e: return web.json_response({"error": str(e)}, status=500)
 
 @search_routes.post("/api/edit")
 async def api_edit(req):
     role, _ = await get_user_role(req)
-    if role != "admin":
-        return web.json_response({"error": "Admin only!"}, status=403)
+    if role != "admin": return web.json_response({"error": "Admin only!"}, status=403)
     try:
         data = await req.json()
         col = data.get("collection", "primary").lower()
-        if col not in COLLECTIONS:
-            return web.json_response({"error": "Invalid collection!"}, status=400)
+        if col not in COLLECTIONS: return web.json_response({"error": "Invalid collection!"}, status=400)
         new_name = data.get("new_name", "").strip()
-        if not new_name:
-            return web.json_response({"error": "New name cannot be empty!"}, status=400)
-        res = await COLLECTIONS[col].update_one(
-            {"$or": [{"file_id": data.get("file_id")}, {"file_ref": data.get("file_id")}]},
-            {"$set": {"file_name": new_name}},
-        )
+        if not new_name: return web.json_response({"error": "New name cannot be empty!"}, status=400)
+        res = await COLLECTIONS[col].update_one({"$or": [{"file_id": data.get("file_id")}, {"file_ref": data.get("file_id")}]}, {"$set": {"file_name": new_name}})
         return web.json_response({"success": bool(res.modified_count)})
-    except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
+    except Exception as e: return web.json_response({"error": str(e)}, status=500)
 
-# ─────────────────────────────────────────────
-# 🍿 MINI APP PAGE
-# ─────────────────────────────────────────────
 @search_routes.get("/miniapp")
 async def miniapp_page(req):
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html_path = os.path.join(base_dir, "web", "miniapp.html")
-
-    if not os.path.exists(html_path):
-        html_path = os.path.join(base_dir, "Web", "miniapp.html")
-
-    if not os.path.exists(html_path):
-        return web.Response(text="miniapp.html not found. Check your folder structure.", status=404)
-
+    if not os.path.exists(html_path): html_path = os.path.join(base_dir, "Web", "miniapp.html")
+    if not os.path.exists(html_path): return web.Response(text="miniapp.html not found.", status=404)
     return web.FileResponse(html_path)
