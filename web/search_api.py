@@ -17,26 +17,45 @@ thumb_cache = {}
 thumb_semaphore = asyncio.Semaphore(1) 
 
 # ─────────────────────────────────────────────
-# 🚀 ULTRA-STABLE CATBOX CDN UPLOAD HELPER
+# 🚀 ULTRA-STABLE MULTIPART CDN UPLOAD HELPER (No More 412 Error)
 # ─────────────────────────────────────────────
 async def upload_to_cdn(image_bytes):
     try:
-        form = aiohttp.FormData()
-        form.add_field('reqtype', 'fileupload')
-        form.add_field('fileToUpload', image_bytes, filename='thumb.jpg', content_type='image/jpeg')
-        
-        async with aiohttp.ClientSession() as session:
-            # Catbox की ऑफिशियल और सुपरफास्ट API
-            async with session.post('https://catbox.moe/user/api.php', data=form) as resp:
-                if resp.status == 200:
-                    res_text = await resp.text()
-                    res_text = res_text.strip()
-                    if res_text.startswith("https://"):
-                        return res_text
-                else:
-                    logger.error(f"Catbox API Error Status: {resp.status}")
+        # aiohttp.MultipartWriter का उपयोग करके explicit boundary और fields को सेट किया गया है
+        with aiohttp.MultipartWriter('form-data') as mpwriter:
+            # 1. reqtype फ़ील्ड जोड़ें
+            part_type = mpwriter.append('fileupload')
+            part_type.set_content_disposition('form-data', name='reqtype')
+            
+            # 2. fileToUpload फ़ील्ड (बाइट्स) जोड़ें
+            part_file = mpwriter.append(image_bytes, headers={'Content-Type': 'image/jpeg'})
+            part_file.set_content_disposition('form-data', name='fileToUpload', filename='thumb.jpg')
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post('https://catbox.moe/user/api.php', data=mpwriter, timeout=15) as resp:
+                    if resp.status == 200:
+                        res_text = await resp.text()
+                        res_text = res_text.strip()
+                        if res_text.startswith("https://"):
+                            return res_text
+                    else:
+                        logger.error(f"Catbox API Error Status: {resp.status}")
     except Exception as e:
         logger.error(f"Catbox Upload Exception: {e}")
+    
+    # 🔄 PLAN B FALLBACK: अगर कैटबॉक्स का सर्वर डाउन हो या 412 दे, तो envs.sh CDN का उपयोग करें
+    try:
+        form = aiohttp.FormData()
+        form.add_field('file', image_bytes, filename='thumb.jpg', content_type='image/jpeg')
+        async with aiohttp.ClientSession() as session:
+            async with session.post('https://envs.sh', data=form, timeout=10) as resp:
+                if resp.status == 200:
+                    res_text = await resp.text()
+                    if res_text.strip().startswith("https://"):
+                        return res_text.strip()
+    except Exception as e:
+        logger.error(f"Fallback CDN (envs.sh) Failed: {e}")
+        
     return None
 
 # ─────────────────────────────────────────────
@@ -175,7 +194,7 @@ async def api_search(req):
     })
 
 # ─────────────────────────────────────────────
-# 📸 THUMBNAIL API (With Catbox CDN & Live Logs)
+# 📸 THUMBNAIL API (With Fixed Multi-CDN & Live Logs)
 # ─────────────────────────────────────────────
 @search_routes.get("/api/thumb")
 async def get_telegram_thumb(req):
@@ -206,7 +225,7 @@ async def get_telegram_thumb(req):
                 # 🔍 लॉग 1: डेटाबेस में पहले से लिंक मौजूद है या नहीं, इसकी जांच
                 for col_name, col in COLLECTIONS.items():
                     existing = await col.find_one({"$or": [{"_id": fid}, {"file_ref": fid}]})
-                    if existing and existing.get("thumb_url") and ("catbox.moe" in existing.get("thumb_url") or "telegra.ph" in existing.get("thumb_url")):
+                    if existing and existing.get("thumb_url") and ("catbox.moe" in existing.get("thumb_url") or "envs.sh" in existing.get("thumb_url") or "telegra.ph" in existing.get("thumb_url")):
                         logger.info(f"✨ [DB HIT] File ID: {fid} | Already has CDN Link: {existing.get('thumb_url')}")
                         raise web.HTTPFound(existing.get("thumb_url"))
 
@@ -230,13 +249,13 @@ async def get_telegram_thumb(req):
                         
                     thumb_cache[fid] = thumb_bytes
                     
-                    # 🚀 विश्वसनीय Catbox CDN पर अपलोड शुरू
-                    logger.info(f"📤 [CDN UPLOAD] Sending bytes to Catbox for File ID: {fid}...")
+                    # 🚀 विश्वसनीय CDN पर अपलोड शुरू
+                    logger.info(f"📤 [CDN UPLOAD] Sending bytes to CDN for File ID: {fid}...")
                     perm_thumb_url = await upload_to_cdn(thumb_bytes)
                     
                     # ✅ लॉग 2: CDN पर डेटा सफलतापूर्वक सेव हुआ या नहीं
-                    if perm_thumb_url and "catbox.moe" in perm_thumb_url:
-                        logger.info(f"🟢 [CDN SUCCESS] Saved successfully on Catbox! URL: {perm_thumb_url}")
+                    if perm_thumb_url and ("catbox.moe" in perm_thumb_url or "envs.sh" in perm_thumb_url):
+                        logger.info(f"🟢 [CDN SUCCESS] Saved successfully on CDN! URL: {perm_thumb_url}")
                         
                         # MongoDB में हमेशा के लिए सिंक करके सेव करना
                         updated_count = 0
@@ -249,7 +268,7 @@ async def get_telegram_thumb(req):
                         
                         logger.info(f"💾 [MONGODB SAVE] Successfully locked in {updated_count} DB documents for File ID: {fid}")
                     else:
-                        logger.error(f"🔴 [CDN FAILED] Catbox rejected image upload for File ID: {fid}!")
+                        logger.error(f"🔴 [CDN FAILED] All CDNs rejected image upload for File ID: {fid}!")
                     
                     asyncio.create_task(msg.delete())
                     return web.Response(body=thumb_bytes, content_type="image/jpeg", headers=headers)
