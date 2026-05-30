@@ -1,8 +1,10 @@
 from aiohttp import web
-import time, re, asyncio, os, json, hmac, hashlib, urllib.parse
+import time, re, asyncio, os, json, hmac, hashlib, urllib.parse, aiohttp, logging
 from utils import temp, get_size, is_rate_limited, is_premium
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN
 from database.ia_filterdb import COLLECTIONS
+
+logger = logging.getLogger(__name__)
 
 search_routes = web.RouteTableDef()
 
@@ -11,8 +13,25 @@ thumb_cache = {}
 thumb_semaphore = asyncio.Semaphore(4)
 
 # ─────────────────────────────────────────────
+# 🚀 TELEGRAPH UPLOAD HELPER (Best Approach)
+# ─────────────────────────────────────────────
+async def upload_to_telegraph(image_bytes):
+    try:
+        form = aiohttp.FormData()
+        form.add_field('file', image_bytes, filename='thumb.jpg', content_type='image/jpeg')
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post('https://telegra.ph/upload', data=form) as resp:
+                if resp.status == 200:
+                    res = await resp.json()
+                    if isinstance(res, list) and len(res) > 0:
+                        return f"https://telegra.ph{res[0]['src']}"
+    except Exception as e:
+        logger.error(f"Telegraph Upload Error: {e}")
+    return None
+
+# ─────────────────────────────────────────────
 # 🔒 STRICT SECURITY: Telegram initData HMAC Verification
-# इसे कोई बायपास नहीं कर सकता क्योंकि यह BOT_TOKEN से वेरीफाई होता है
 # ─────────────────────────────────────────────
 def verify_telegram_init_data(init_data: str) -> dict | None:
     """
@@ -141,8 +160,8 @@ async def api_search(req):
         file_name = d.get("file_name", "Unknown File")
         db_thumb = d.get("thumb_url")
         
-        # ✅ FIX: अगर डेटाबेस में पुरानी imgbb वाली खराब लिंक सेव है, तो उसे इग्नोर करें
-        if db_thumb and ("ibb.co" in db_thumb or "default-movie" in db_thumb):
+        # ✅ FIX: अगर डेटाबेस में पुरानी imgbb या कोई खराब लिंक सेव है, तो उसे इग्नोर करें
+        if db_thumb and ("ibb.co" in db_thumb or "default-movie" in db_thumb or "placehold" in db_thumb):
             db_thumb = None
 
         tg_thumb = db_thumb if db_thumb else f"/api/thumb?file_id={fid}"
@@ -170,31 +189,34 @@ async def api_search(req):
     })
 
 # ─────────────────────────────────────────────
-# 📸 THUMBNAIL API
+# 📸 OPTIMIZED THUMBNAIL API (With Reload System)
 # ─────────────────────────────────────────────
 @search_routes.get("/api/thumb")
 async def get_telegram_thumb(req):
     fid = req.query.get("file_id")
+    is_retry = req.query.get("retry", "false").lower() == "true"
     if not fid:
         return web.Response(status=400)
 
     headers = {"Content-Disposition": 'inline; filename="poster.jpg"'}
     
-    # ✅ FIX: नई काम करने वाली डिफ़ॉल्ट इमेज (Professional Dark Theme)
-    DEFAULT_THUMB = "https://placehold.co/400x600/141414/e50914?text=No+Poster"
+    # यदि यूजर ने खुद रीलोड बटन दबाया है, तो 'NO_THUMB' ब्लॉक को कैशे से हटा दें
+    if is_retry and fid in thumb_cache:
+        if thumb_cache[fid] == "NO_THUMB":
+            thumb_cache.pop(fid, None)
 
+    # 1. मेमोरी कैशे चेक करें
     if fid in thumb_cache:
         if thumb_cache[fid] == "NO_THUMB":
-            raise web.HTTPFound(DEFAULT_THUMB)
+            return web.Response(status=404) # फ्रंटएंड को 404 दें ताकि रीलोड बटन दिखे
         return web.Response(body=thumb_cache[fid], content_type="image/jpeg", headers=headers)
 
     async with thumb_semaphore:
-        if fid in thumb_cache:
-            if thumb_cache[fid] == "NO_THUMB":
-                raise web.HTTPFound(DEFAULT_THUMB)
+        if fid in thumb_cache and thumb_cache[fid] != "NO_THUMB":
             return web.Response(body=thumb_cache[fid], content_type="image/jpeg", headers=headers)
 
         try:
+            # 2. टेलीग्राम बोट से मीडिया मंगाएं
             msg = await temp.BOT.send_cached_media(chat_id=BIN_CHANNEL, file_id=fid)
             thumb_id = None
             if msg.video and msg.video.thumbs:
@@ -205,20 +227,36 @@ async def get_telegram_thumb(req):
             if thumb_id:
                 file_data = await temp.BOT.download_media(thumb_id, in_memory=True)
                 thumb_bytes = file_data.getvalue()
+                
                 if len(thumb_cache) >= MAX_CACHE:
                     oldest_key = next(iter(thumb_cache))
-                    del thumb_cache[oldest_key]
+                    thumb_cache.pop(oldest_key, None)
+                    
                 thumb_cache[fid] = thumb_bytes
+                
+                # 🚀 Telegraph पर अपलोड करने का प्रयास
+                perm_thumb_url = await upload_to_telegraph(thumb_bytes)
+                
+                # ✅ सिर्फ असली लिंक मिलने पर ही DB में लॉक करें
+                if perm_thumb_url and "telegra.ph" in perm_thumb_url:
+                    for col_name, col in COLLECTIONS.items():
+                        await col.update_many(
+                            {"file_ref": fid},
+                            {"$set": {"thumb_url": perm_thumb_url}}
+                        )
+                    logger.info(f"🎉 Thumb Cache OK & Saved in DB: {fid}")
+                
                 asyncio.create_task(msg.delete())
                 return web.Response(body=thumb_bytes, content_type="image/jpeg", headers=headers)
             else:
                 thumb_cache[fid] = "NO_THUMB"
                 asyncio.create_task(msg.delete())
-                raise web.HTTPFound(DEFAULT_THUMB)
-        except web.HTTPFound:
-            raise
-        except Exception:
-            raise web.HTTPFound(DEFAULT_THUMB)
+                return web.Response(status=404)
+                
+        except Exception as e:
+            logger.error(f"❌ Telegram Error/Rate Limit: {e}")
+            # कैशे या DB में कुछ भी गलत सेव नहीं करेंगे, फ्रंटएंड को सीधा 429 भेजेंगे
+            return web.Response(status=429)
 
 async def _auto_del_msg(msg, delay):
     await asyncio.sleep(delay)
