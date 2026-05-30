@@ -32,16 +32,16 @@
         .filter-btn{background:var(--card);border:1px solid var(--border);padding:8px 16px;font-weight:700;color:var(--muted);cursor:pointer;border-radius:20px; font-size: 13px; transition:0.2s;}
         .filter-btn.active{background:var(--text);color:var(--bg); border-color:var(--text);}
         
-        /* Grid Layout: ✅ FIX - 1 Column for Mobile, 3 for Desktop */
+        /* Grid Layout */
         .main{padding:0 4%; max-width:1400px; margin:0 auto}
-        .res-grid{display:grid;grid-template-columns:1fr;gap:15px;} /* Mobile Default: 1 Row */
+        .res-grid{display:grid;grid-template-columns:1fr;gap:15px;}
         
-        @media(min-width: 600px) { .res-grid{grid-template-columns:repeat(2, 1fr);} } /* Tablet: 2 Rows */
-        @media(min-width: 900px) { .res-grid{grid-template-columns:repeat(3, 1fr);} } /* Desktop: 3 Rows */
+        @media(min-width: 600px) { .res-grid{grid-template-columns:repeat(2, 1fr);} }
+        @media(min-width: 900px) { .res-grid{grid-template-columns:repeat(3, 1fr);} }
 
         .file-card{display:flex;flex-direction:column;background:var(--card);border-radius:10px;border:1px solid var(--border);overflow:hidden;position:relative;}
         
-        /* ✅ FIX - Landscape Aspect Ratio (16:9) */
+        /* Landscape Aspect Ratio (16:9) */
         .poster-box{width:100%;position:relative;background:var(--bg3); padding-top: 56.25%;} 
         .mode-none .poster-box{display:none}
         .fc-poster{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}
@@ -190,26 +190,11 @@
             }
             
             const timestamp = new Date().getTime();
-            const testImg = new Image();
-            testImg.src = `/api/thumb?file_id=${fileId}&retry=true&t=${timestamp}`;
-
-            testImg.onload = function() {
-                const box = document.getElementById(`poster-box-${fileId}`);
-                if (box) { 
-                    box.innerHTML = `<img src="${testImg.src}" class="fc-poster" onerror="handleThumbError('${fileId}')">`; 
-                }
-            };
-
-            testImg.onerror = function() {
-                if (btn) {
-                    btn.innerText = "Wait 5s...";
-                    setTimeout(() => {
-                        btn.innerText = "🔄 Retry";
-                        btn.disabled = false;
-                    }, 5000);
-                    showToast("टेलीग्राम अभी बिजी है, 5 सेकंड बाद फिर दबाएं।");
-                }
-            };
+            const box = document.getElementById(`poster-box-${fileId}`);
+            if (box) {
+                // डायरेक्ट क्लीन बाइट्स स्ट्रीम यूआरएल को इमेज कंपोनेंट में भेजें
+                box.innerHTML = `<img src="/api/thumb?file_id=${fileId}&retry=true&t=${timestamp}" class="fc-poster" onerror="handleThumbError('${fileId}')">`;
+            }
         }
 
         function showError(type, extra = '') {
@@ -292,7 +277,7 @@
                     if (pMode !== 'none') {
                         imgHtml = `
                         <div class="poster-box" id="poster-box-${f.file_id}">
-                            <img src="${f.poster}" class="fc-poster" onerror="handleThumbError('${f.file_id}')" loading="lazy">
+                            <img src="${f.tg_thumb}" class="fc-poster" onerror="handleThumbError('${f.file_id}')" loading="lazy">
                         </div>`;
                     }
 
@@ -330,27 +315,24 @@
         async function openStream(fileId, mode) {
             showToast(mode === 'watch' ? '▶ Opening player...' : '⬇ Preparing download...');
             try {
-                let res = await fetch(
-                    `/setup_stream?file_id=${fileId}&mode=${mode}`,
-                    {
-                        headers: { 'X-Telegram-Init-Data': INIT_DATA },
-                        redirect: 'manual' 
-                    }
-                );
-
-                if (res.type === 'opaqueredirect' || res.status === 0) {
-                    let location = res.headers.get('Location') || res.url;
-                    if (location) {
-                        tg.openLink(window.location.origin + location);
-                        return;
-                    }
-                }
+                // ✅ GET से हटाकर अब सुरक्षित POST रिक्वेस्ट भेजेंगे ताकि क्रॉलर्स बंद रहें
+                let res = await fetch('/setup_stream?file_id=' + fileId + '&mode=' + mode, {
+                    method: 'POST',
+                    headers: { 
+                        'X-Telegram-Init-Data': INIT_DATA,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ file_id: fileId, mode: mode })
+                });
 
                 if (res.status === 403) { showToast('🔒 Access denied'); return; }
+                if (!res.ok) { showToast('❌ Server busy, try again'); return; }
 
                 let data = await res.json().catch(() => ({}));
                 if (data.url) {
-                    tg.openLink(data.url);
+                    tg.openLink(window.location.origin + data.url);
+                } else if (data.error) {
+                    showToast('❌ ' + data.error);
                 } else {
                     tg.openLink(`${window.location.origin}/setup_stream?file_id=${fileId}&mode=${mode}`);
                 }
@@ -364,8 +346,6 @@
         if(pMode === 'none') document.getElementById('results').classList.add('mode-none');
 
         function next() { if (nextOff) { curPage++; doSearch(nextOff); } }
-        
-        // ✅ FIX - Pagination set to 21
         function prev() { if (curPage > 1) { curPage--; doSearch(Math.max(0, curOff - 21)); } }
     </script>
 </body>
