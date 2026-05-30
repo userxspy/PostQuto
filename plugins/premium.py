@@ -2,7 +2,21 @@ import os, io, qrcode, asyncio, traceback, logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import pyromod.listen # ✅ अब यह बिल्कुल क्रैश नहीं होगा
+# ─────────────────────────────────────────────────────────
+# 🔥 CRITICAL NATIVE PATCH: Forced Event Loop for Pyrogram/Pyromod Sync
+# ─────────────────────────────────────────────────────────
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    try:
+        import uvloop
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    except ImportError:
+        pass
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+import pyromod.listen # ✅ अब यह पायोग्राम सिंक को क्रैश नहीं करने देगा
 from hydrogram import Client, filters, enums
 from hydrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -15,7 +29,6 @@ from utils import temp, get_readable_time, get_wish
 logger = logging.getLogger(__name__)
 VERIFY_CACHE = {}
 
-# ✅ एडमिन के लिए कॉमन मैसेज
 ADMIN_MSG = "👑 **You are the Admin!**\nYou have Lifetime Premium access."
 ADMIN_ALERT = "👑 You are the Admin! You have Lifetime Premium access."
 
@@ -43,7 +56,6 @@ async def is_premium(uid, bot):
     mp = await db.get_plan(uid)
     if mp.get("premium"):
         exp = parse_expire_time(mp.get("expire"))
-        # ✅ भारतीय समय (IST) के अनुसार सिंक किया गया
         if exp and exp < datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None):
             try: 
                 await bot.send_message(
@@ -72,7 +84,6 @@ async def check_premium_expired(bot):
     
     while True:
         try:
-            # ✅ IST (Asia/Kolkata) के अनुसार टाइम कैलकुलेशन फिक्स
             now = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
             limit_time = (now + timedelta(hours=13)).strftime("%Y-%m-%d %H:%M:%S")
             
@@ -108,7 +119,6 @@ async def check_premium_expired(bot):
         except Exception as e: 
             logger.error(f"Premium Loop Error: {e}")
         
-        # ✅ सेफ्टी स्लीप लूप के अंत में रखा गया ताकि डेटाबेस पर ओवरलैप प्रेशर न आए
         await asyncio.sleep(60)
 
 # =========================
@@ -176,7 +186,6 @@ async def list_web_users(c, m):
     msg = await m.reply("🔄 Fetching Web Users...")
     count = 0
     text = "🌐 **Fast Finder Web Users**\n\n"
-    
     async for u in web_db.col.find():
         count += 1
         joined = u.get('joined_date')
