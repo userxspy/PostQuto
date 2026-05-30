@@ -1,37 +1,19 @@
 import os
-import re
-import bs4
-import time
 import requests
 import asyncio
 import random
 import traceback
 import logging
-from hydrogram import Client, filters, enums
+from hydrogram import Client, filters
 from info import LOG_CHANNEL as DUMP_GROUP, ADMINS
-from database.users_chats_db import db  # डेटाबेस सेटिंग्स के लिए
+from database.users_chats_db import db
 
 logger = logging.getLogger(__name__)
 
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:105.0) Gecko/20100101 Firefox/105.0",
-    "Accept": "*/*",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-    "X-Requested-With": "XMLHttpRequest",
-    "Origin": "https://saveig.app",
-    "Connection": "keep-alive",
-    "Referer": "https://saveig.app/en",
-}
-
-# 🧠 Requests को बिना बोट अटकाए एसिंक्रोनस चलाने के लिए हेल्पर फंक्शन्स
+# 🧠 Requests को बिना बोट अटकाए एसिंक्रोनस चलाने के लिए हेल्पर फ़ंक्शन
 async def async_get(url, headers=None):
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, lambda: requests.get(url, headers=headers))
-
-async def async_post(url, data=None, headers=None):
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, lambda: requests.post(url, data=data, headers=headers))
+    return await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, timeout=15))
 
 # ─────────────────────────────────────────────
 # ⚙️ INSTA ON/OFF COMMAND (Admin Only)
@@ -66,7 +48,6 @@ async def link_handler(Mbot, message):
         return await message.reply("🚧 **Sorry!** इंस्टाग्राम डाउनलोडर अभी बोट एडमिन द्वारा बंद (Disabled) किया गया है।")
 
     link = message.matches[0].group(0)
-    global headers
     m = None
     downfile = None
     default_caption = "<b>Downloaded By @UncutFlixBot</b>"
@@ -74,46 +55,58 @@ async def link_handler(Mbot, message):
     try:
         m = await message.reply_sticker("CAACAgUAAxkBAAITAmWEcdiJs9U2WtZXtWJlqVaI8diEAAIBAAPBJDExTOWVairA1m8eBA")
         
-        # 🎯 मुख्य फिक्स: SaveIG API का उपयोग करके सीधे वीडियो यूआरएल निकालेंगे ताकि क्रैश न हो
-        meta_resp = await async_post("https://saveig.app/api/ajaxSearch", data={"q": link, "t": "media", "lang": "en"}, headers=headers)
+        # 🎯 मेथड 1: सबसे स्टेबल 'igv.com' डोमेन में कन्वर्ट करो
+        video_url = link.replace("instagram.com", "igv.com").replace("==", "%3D%3D")
+        if video_url.endswith("="): video_url = video_url[:-1]
         
-        if meta_resp.ok:
-            res = meta_resp.json()
-            meta = re.findall(r'href="(https?://[^"]+)"', res['data'])
-            if meta:
-                content_value = meta[0]
-                try:
-                    # सीधे टेलीग्राम सर्वर के ज़रिए वीडियो भेजें
-                    dump_file = await message.reply_video(content_value, caption=default_caption)
-                    if m: await m.delete()
-                    return
-                except Exception:
-                    # अगर टेलीग्राम डायरेक्ट यूआरएल फेच नहीं कर पाता, तो लोकल रैम में डाउनलोड करके भेजें
-                    downfile = f"{os.getcwd()}/{random.randint(1, 10000000)}.mp4"
-                    dl_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-                    file_resp = await async_get(content_value, headers=dl_headers)
+        try:
+            # टेलीग्राम सर्वर के ज़रिए सीधे भेजने की कोशिश करें
+            dump_file = await message.reply_video(video_url, caption=default_caption)
+            if m: await m.delete()
+            return
+        except Exception:
+            # अगर सीधे नहीं जाता, तो कोएब सर्वर पर बैकएंड में डाउनलोड करके भेजें
+            try:
+                downfile = f"{os.getcwd()}/{random.randint(1, 10000000)}.mp4"
+                dl_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+                file_resp = await async_get(video_url, headers=dl_headers)
+                
+                if file_resp.status_code == 200:
                     with open(downfile, 'wb') as x:
                         x.write(file_resp.content)
-                    
                     dump_file = await message.reply_video(downfile, caption=default_caption)
                     if m: await m.delete()
                     return
+            except Exception:
+                pass
 
-        # 🎯 बैकअप मेथड: अगर API काम न करे, तब नए वर्किंग डोमेन (igv.com) का उपयोग करें
-        url = link.replace("instagram.com", "igv.com").replace("==", "%3D%3D")
-        if url.endswith("="): url = url[:-1]
+        # 🎯 बैकअप मेथड 2: अगर 'igv.com' फेल हो, तो 'ginnstagram.com' का उपयोग करें
+        backup_url = link.replace("instagram.com", "ginnstagram.com").replace("==", "%3D%3D")
+        if backup_url.endswith("="): backup_url = backup_url[:-1]
         
-        dump_file = await message.reply_video(url, caption=default_caption)
-        if m: await m.delete()
-        
+        try:
+            dump_file = await message.reply_video(backup_url, caption=default_caption)
+            if m: await m.delete()
+            return
+        except Exception:
+            # बैकअप डोमेन को भी लोकल डाउनलोड करके भेजने की कोशिश करें
+            downfile = f"{os.getcwd()}/{random.randint(1, 10000000)}.mp4"
+            dl_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+            file_resp = await async_get(backup_url, headers=dl_headers)
+            with open(downfile, 'wb') as x:
+                x.write(file_resp.content)
+            dump_file = await message.reply_video(downfile, caption=default_caption)
+            if m: await m.delete()
+            return
+            
     except Exception as e:
         if DUMP_GROUP:
             try:
-                await Mbot.send_message(DUMP_GROUP, f"⚠️ Instagram Error: {e}\nLink: {link}")
+                await Mbot.send_message(DUMP_GROUP, f"⚠️ Instagram Critical Error: {e}\nLink: {link}")
                 await Mbot.send_message(DUMP_GROUP, f"<code>{traceback.format_exc()}</code>")
             except:
                 pass
-        await message.reply("❌ **Sorry, unable to download this media!** सुनिश्चित करें कि रील का अकाउंट पब्लिक है।")
+        await message.reply("❌ **Sorry, unable to download this media!** वेबसाइट डाउन होने के कारण समस्या आ रही है, कृपया कुछ देर बाद प्रयास करें।")
 
     finally:
         if 'dump_file' in locals() and dump_file and DUMP_GROUP:
