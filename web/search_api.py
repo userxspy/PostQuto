@@ -111,7 +111,7 @@ async def api_search(req):
         if db_thumb and ("default-movie" in db_thumb or "placehold" in db_thumb or "ibb.co" in db_thumb):
             db_thumb = None
 
-        # ✅ फ्रंटएंड को हमेशा साफ-सुथरा API यूआरएल दें, चाहे इमेज DB में锁 हो या न हो
+        # ✅ फ्रंटएंड को हमेशा साफ-सुथरा API यूआरएल दें, चाहे इमेज DB में鎖 हो या न हो
         tg_thumb = f"/api/thumb?file_id={db_id}"
         
         return {
@@ -293,7 +293,6 @@ async def api_delete(req):
         col = data.get("collection", "primary").lower()
         if col not in COLLECTIONS: return web.json_response({"error": "Invalid collection!"}, status=400)
         
-        # ✅ Fixed: Added _id match constraint
         res = await COLLECTIONS[col].delete_one({"$or": [{"_id": fid}, {"file_id": fid}, {"file_ref": fid}]})
         return web.json_response({"success": bool(res.deleted_count)})
     except Exception as e: return web.json_response({"error": str(e)}, status=500)
@@ -325,15 +324,28 @@ async def api_edit(req):
         if not update_data:
             return web.json_response({"error": "Nothing to update! Provide name or thumbnail."}, status=400)
 
-        # ✅ Fixed: Added _id match constraint
+        # डेटाबेस में अपडेट करें
         res = await COLLECTIONS[col].update_one(
             {"$or": [{"_id": fid}, {"file_id": fid}, {"file_ref": fid}]}, 
             {"$set": update_data}
         )
         
-        # 3. कैशे क्लियर करना ताकि पुराना पोस्टर तुरंत रिप्लेस हो जाए
-        if res.modified_count and fid in thumb_cache:
+        # ─────────────────────────────────────────────
+        # ⚡ 3. कैशे क्लियरिंग (Cache Busting Fix)
+        # ─────────────────────────────────────────────
+        if res.modified_count:
+            # मुख्य फ़ाइल आईडी का कैशे हटाएं
             thumb_cache.pop(fid, None)
+            
+            # सुरक्षित रहने के लिए डॉक्यूमेंट से संबंधित अन्य क्रॉस-रेफरेंस IDs का भी कैशे डिलीट करें
+            doc = await COLLECTIONS[col].find_one({"_id": fid})
+            if doc:
+                old_ref = doc.get("file_ref")
+                old_id = doc.get("file_id")
+                if old_ref: thumb_cache.pop(old_ref, None)
+                if old_id: thumb_cache.pop(old_id, None)
+                
+            logger.info(f"♻️ Cache memory fully buster/cleared for updated file: {fid}")
             
         return web.json_response({"success": bool(res.modified_count)})
     except Exception as e: return web.json_response({"error": str(e)}, status=500)
