@@ -6,7 +6,22 @@ from utils import temp, get_readable_time
 from info import IS_PREMIUM
 
 # ======================================================
-# 🆔 ID COMMAND (Fixed Syntax)
+# 📂 GET MEDIA FILE ID HELPER
+# ======================================================
+def get_media_file_id(msg):
+    """मैसेज से मीडिया ऑब्जेक्ट ढूंढकर उसकी file_id और file_ref निकालता है"""
+    if not msg: return None, None
+    for attr in ["photo", "video", "document", "audio", "voice", "animation", "sticker"]:
+        media = getattr(msg, attr, None)
+        if media:
+            if attr == "photo":
+                # फोटो लिस्ट के रूप में होती है, सबसे लास्ट वाली (हाई क्वालिटी) की आईडी लें
+                return media[-1].file_id, getattr(media[-1], "file_ref", "N/A")
+            return media.file_id, getattr(media, "file_ref", "N/A")
+    return None, None
+
+# ======================================================
+# 🆔 ID COMMAND (Upgraded for Media support)
 # ======================================================
 @Client.on_message(filters.command("id"))
 async def get_id(c, m):
@@ -16,7 +31,6 @@ async def get_id(c, m):
     b = "👤 Member"
     if m.chat.type in (enums.ChatType.GROUP, enums.ChatType.SUPERGROUP):
         try:
-            # ✅ FIX: enums.ChatMemberStatus.ADMIN को हटाया गया (चूंकि यह मौजूद नहीं है)
             st = (await c.get_chat_member(m.chat.id, u.id)).status
             if st == enums.ChatMemberStatus.OWNER:
                 b = "👑 Owner"
@@ -33,11 +47,37 @@ async def get_id(c, m):
     if m.chat.type in (enums.ChatType.GROUP, enums.ChatType.SUPERGROUP):
         t += f"📛 <b>Title:</b> {m.chat.title}\n🔗 <b>Link:</b> @{m.chat.username or 'Private'}\n"
 
-    if r and r.sticker:
-        t += (f"\n🎭 <b>STICKER DETAILS</b>\n🆔 <b>File ID:</b> <code>{r.sticker.file_id}</code>\n📦 <b>Set:</b> <code>{r.sticker.set_name or 'N/A'}</code>\n"
-              f"🔖 <b>Emoji:</b> {r.sticker.emoji or 'N/A'}\n🎞 <b>Anim:</b> {'Yes' if r.sticker.is_animated else 'No'} | <b>Vid:</b> {'Yes' if r.sticker.is_video else 'No'}\n")
+    # अगर किसी मीडिया मैसेज पर रिप्लाई करके /id मारा गया है
+    if r:
+        f_id, f_ref = get_media_file_id(r)
+        if f_id:
+            t += f"\n📂 <b>MEDIA DETAILS</b>\n🆔 <b>File ID:</b> <code>{f_id}</code>\n"
 
     await m.reply_text(t, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+
+# ======================================================
+# 📸 FILE ID COMMAND (New Feature for Admin Panel)
+# ======================================================
+@Client.on_message(filters.command(["fileid", "file_id"]))
+async def get_custom_file_id(c, m):
+    # रिप्लाई वाला मैसेज चेक करें, नहीं तो खुद का मैसेज (अगर कैप्शन में कमांड है)
+    target_msg = m.reply_to_message if m.reply_to_message else m
+    
+    file_id, file_ref = get_media_file_id(target_msg)
+    
+    if not file_id:
+        return await m.reply_text(
+            "⚠️ <b>उपयोग कैसे करें:</b>\nकिसी भी फोटो, वीडियो या फाइल को <b>Reply</b> करके <code>/fileid</code> लिखें "
+            "या फाइल अपलोड करते समय उसके <b>Caption</b> में लिख दें।",
+            parse_mode=enums.ParseMode.HTML
+        )
+        
+    txt = (f"🔑 <b>EXTRACTED FILE ID</b>\n\n"
+           f"📸 <b>File ID:</b>\n<code>{file_id}</code>\n\n"
+           f"🔖 <b>File Ref (Unique ID):</b>\n<code>{file_ref}</code>\n\n"
+           f"💡 <i>इसे कॉपी करके आप सीधे एडमिन पैनल के थंबनेल रिप्लेस बॉक्स में यूज़ कर सकते हैं।</i>")
+           
+    await m.reply_text(txt, parse_mode=enums.ParseMode.HTML)
 
 # ======================================================
 # 🚨 REPORT SYSTEM (Fixed Iterator Crash)
@@ -60,7 +100,6 @@ async def report_user(c, m):
     btn = IKM([[IKB("🔗 View", url=r.link)], [IKB("🗑 Delete", callback_data=f"del_{m.chat.id}_{r.id}")]])
     
     sent = 0
-    # ✅ FIX: filter="administrators" स्ट्रिंग का उपयोग किया गया ताकि हाइड्रोग्राम क्रैश न हो
     async for x in c.get_chat_members(m.chat.id, filter="administrators"):
         if not x.user.is_bot:
             try:
