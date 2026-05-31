@@ -192,7 +192,6 @@
             const timestamp = new Date().getTime();
             const box = document.getElementById(`poster-box-${fileId}`);
             if (box) {
-                // डायरेक्ट क्लीन बाइट्स स्ट्रीम यूआरएल को इमेज कंपोनेंट में भेजें
                 box.innerHTML = `<img src="/api/thumb?file_id=${fileId}&retry=true&t=${timestamp}" class="fc-poster" onerror="handleThumbError('${fileId}')">`;
             }
         }
@@ -315,8 +314,7 @@
         async function openStream(fileId, mode) {
             showToast(mode === 'watch' ? '▶ Opening player...' : '⬇ Preparing download...');
             try {
-                // ✅ GET से हटाकर अब सुरक्षित POST रिक्वेस्ट भेजेंगे ताकि क्रॉलर्स बंद रहें
-                let res = await fetch('/setup_stream?file_id=' + fileId + '&mode=' + mode, {
+                let res = await fetch('/setup_stream', {
                     method: 'POST',
                     headers: { 
                         'X-Telegram-Init-Data': INIT_DATA,
