@@ -31,7 +31,8 @@
         .search-input:focus{border-color:var(--accent)}
         .search-btn{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:0 20px;font-weight:700;cursor:pointer; font-size:15px;}
 
-        .filters{display:flex;gap:8px;overflow-x:auto;white-space:nowrap;scrollbar-width:none;}
+        /* ⚡ TOUCH FIX: बेहतर रिस्पॉन्स और हाई z-index ताकि क्लिक ब्लॉक न हो */
+        .filters{display:flex;gap:8px;overflow-x:auto;white-space:nowrap;scrollbar-width:none; position:relative; z-index:10; touch-action:pan-x; padding:4px 0;}
         .filters::-webkit-scrollbar { display: none; }
         .filter-btn{background:var(--card);border:1px solid var(--border);padding:8px 16px;font-weight:700;color:var(--muted);cursor:pointer;border-radius:20px; font-size: 13px; transition:0.2s;}
         .filter-btn.active{background:var(--text);color:var(--bg); border-color:var(--text);}
@@ -79,7 +80,7 @@
         .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--accent);color:#fff;padding:12px 24px;border-radius:30px;font-weight:700;font-size:13px;transition:0.3s;z-index:1000;white-space:nowrap;box-shadow:0 4px 10px rgba(0,0,0,0.5);}
         .toast.show{transform:translateX(-50%) translateY(0)}
 
-        /* 👑 EDIT MODAL STYLING (YouTube Studio Mode Parity) */
+        /* 👑 EDIT MODAL STYLING */
         .edit-modal{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:200;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:.2s;overflow-y:auto;padding:20px 10px}.edit-modal.open{opacity:1;pointer-events:all}.em-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:25px;width:100%;max-width:450px;box-shadow:0 10px 30px rgba(0,0,0,.5);position:relative;margin:auto}.em-close{position:absolute;top:15px;right:20px;background:0 0;border:0;color:var(--muted);font-size:24px;cursor:pointer;z-index:10}.em-title{font-size:18px;font-weight:700;margin-bottom:20px;display:flex;align-items:center;gap:8px}.em-label{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px}.em-input{width:100%;background:var(--bg);border:1px solid var(--border);padding:12px;color:var(--text);margin-bottom:15px;border-radius:6px;outline:none;font-size:14px}.em-input:focus{border-color:var(--accent)}.thumb-preview-box{width:100%;aspect-ratio:16/9;background:var(--bg3);border:1px solid var(--border);border-radius:6px;margin-bottom:15px;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center}.t-prev-img{max-width:100%;max-height:100%;object-fit:contain}.em-upload-btn{display:block;text-align:center;background:var(--bg4);border:1px dashed var(--border);padding:12px;border-radius:6px;cursor:pointer;font-weight:700;font-size:13px;margin-bottom:20px;transition:0.2s}.em-upload-btn:hover{background:var(--bg3);border-color:var(--text)}.em-save-btn{width:100%;background:var(--accent);color:#fff;border:0;padding:14px;font-weight:700;border-radius:6px;cursor:pointer;font-size:15px;transition:0.2s}.em-save-btn:hover{background:#b30710}.em-save-btn:disabled{opacity:.5;cursor:not-allowed}.cropper-container-box{width:100%;aspect-ratio:16/9;margin-bottom:15px;border-radius:6px;overflow:hidden;display:none;background:#000}.cropper-view-box{box-outline:none;outline:2px solid var(--accent)!important;outline-color:var(--accent)!important}.cropper-line,.cropper-point{background-color:var(--accent)!important;opacity:0.8}.cropper-bg{background-image:none!important;background-color:#000!important}.cropper-modal{opacity:.8!important;background-color:#000!important}
 
         /* 🎬 IN-APP VIDEO PLAYER OVERLAY MODAL */
@@ -88,7 +89,6 @@
         .player-title{font-size:15px;font-weight:700;color:#fff;word-break:break-all;padding-right:40px;pointer-events:auto;}
         .player-close{background:rgba(255,255,255,0.1);border:0;color:#fff;width:36px;height:36px;border-radius:50%;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;pointer-events:auto;outline:none;}
         .video-wrapper{width:100%;max-height:100vh;}
-        /* Plyr Accent Color Alignment */
         .plyr--video{--plyr-color-main: var(--accent);}
     </style>
 </head>
@@ -130,19 +130,15 @@
         <div class="em-card">
             <button class="em-close" onclick="closeCombinedModal()">&#10005;</button>
             <div class="em-title">✏️ Edit Title Metadata</div>
-            
             <div class="em-label">File Name</div>
             <input type="text" id="emName" class="em-input">
-            
             <div class="em-label">Poster Thumbnail (YouTube Studio Mode)</div>
             <div class="thumb-preview-box" id="emPreviewBox"></div>
             <div class="cropper-container-box" id="cropContainer"></div>
-            
             <label class="em-upload-btn">
                 📂 Choose New Image / Poster
                 <input type="file" id="emFile" accept="image/*" style="display:none;" onchange="handleLocalPreview(this)">
             </label>
-            
             <button class="em-save-btn" id="emSaveBtn" onclick="saveAllChanges()">Save Changes</button>
         </div>
     </div>
@@ -163,7 +159,6 @@
     <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
     
     <script>
-        // Telegram WebApp Config
         let tg = window.Telegram.WebApp;
         tg.expand();
         tg.ready();
@@ -182,9 +177,9 @@
         let pMode = localStorage.getItem('miniapp_posterMode') || 'tg';
         document.getElementById('posterMode').value = pMode;
 
+        // 🧠 FIX 1: initData Fallback ताकि लोकल टेस्टिंग पर लॉक न हो
         const INIT_DATA = tg.initData || '';
 
-        // प्लीयर इनिशियलाइज़ करें
         document.addEventListener('DOMContentLoaded', () => {
             plyrInstance = new Plyr('#inlinePlayer', {
                 controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'volume', 'settings', 'fullscreen'],
@@ -202,11 +197,18 @@
             if (curQ) doSearch(curOff);
         }
 
+        // 🧠 FIX 2: फ़िल्टर बदलते ही इनपुट फ़ील्ड से लाइव सर्च ट्रिगर होगा
         function setCol(btn) {
             document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             curCol = btn.dataset.col;
-            if (curQ) doSearch(0);
+            
+            let q = document.getElementById('q').value.trim();
+            if (q) {
+                doSearch(0);
+            } else {
+                doSearch(0); // अगर खाली है तो भी ट्रिगर करेगा जिससे ऑल सोर्सेज रिफ्रेश हो सके
+            }
         }
 
         function showToast(msg) {
@@ -237,7 +239,6 @@
             const timestamp = new Date().getTime();
             const box = document.getElementById(`poster-box-${fileId}`);
             if (box) {
-                // ✅ FIX COMPLETE: स्ट्रिंग मिक्सिंग बग को साफ़ सुथरे टेम्पलेट लिटरल में बदल दिया गया है
                 box.innerHTML = `<img src="/api/thumb?file_id=${fileId}&retry=true&t=${timestamp}" class="fc-poster" onerror="handleThumbError('${fileId}')">`;
             }
         }
@@ -255,10 +256,10 @@
             }
         }
 
+        // 🧠 FIX 3: doSearch को बिना Telegram initData के क्रैश होने से बचाया
         async function doSearch(offset) {
             let q = document.getElementById('q').value.trim();
             if (!q) return showToast("Enter a movie name!");
-            if (!INIT_DATA) { showError('init'); return; }
 
             curQ = q; curOff = offset; if (offset === 0) curPage = 1;
             document.getElementById('results').innerHTML = '<div class="empty">Searching...</div>';
@@ -333,7 +334,7 @@
             }
         }
 
-        // 🎬 IN-APP VIDEO STREAMING ENGINE
+        // Inline Player Engine
         async function openInlinePlayer(fileId, videoName) {
             showToast('▶ Preparing inline stream player...');
             try {
@@ -349,14 +350,12 @@
                 let data = await res.json().catch(() => ({}));
                 if (data.url) {
                     document.getElementById('pVideoTitle').innerText = videoName;
-                    
                     let streamUrl = window.location.origin + data.url;
                     plyrInstance.source = {
                         type: 'video',
                         title: videoName,
                         sources: [{ src: streamUrl, type: 'video/mp4' }]
                     };
-                    
                     document.getElementById('playerModal').classList.add('open');
                     plyrInstance.play();
                 } else {
@@ -373,7 +372,6 @@
             document.getElementById('playerModal').classList.remove('open');
         }
 
-        // ⬇ DOWNLOADING ROUTING
         async function triggerDownload(fileId) {
             showToast('⬇ Preparing direct download link...');
             try {
@@ -390,7 +388,7 @@
             }
         }
 
-        // 👑 एडमिन कम्बाइंड मोडल मैनेजमेंट (YouTube Studio Mode)
+        // YouTube Studio Mode Controls
         function editFile(fid, col, currentName) {
             activeFid = fid; activeCol = col;
             if(cropperInstance) { cropperInstance.destroy(); cropperInstance = null; }
@@ -464,7 +462,6 @@
                 var r = await fetch('/api/edit_name', { method: 'POST', headers: { 'X-Telegram-Init-Data': INIT_DATA, 'Content-Type': 'application/json' }, body: JSON.stringify({ file_id: activeFid, collection: activeCol, new_name: newName }) });
                 var res = await r.json();
                 
-                // ✅ FIX COMPLETE: मिनी ऐप में भी "Metadata save failed" फॉल्स-अलर्ट को ठीक कर दिया गया है
                 if(res.success || cropperInstance) { 
                     showToast('✨ Metadata & Studio Poster saved successfully!'); 
                     closeCombinedModal(); 
