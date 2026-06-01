@@ -331,8 +331,9 @@ async def api_upload_thumb(req):
             chat_id=BIN_CHANNEL,
             photo=io.BytesIO(image_bytes)
         )
-        # Sabse badi size ka photo lo
-        tg_photo = photo_msg.photo[-1] if photo_msg.photo else None
+        # Hydrogram mein photo_msg.photo ek Photo object hai (list nahi)
+        # file_id seedha photo object se milta hai
+        tg_photo = photo_msg.photo
         if not tg_photo:
             asyncio.create_task(photo_msg.delete())
             return web.json_response({"error": "Photo upload fail hua!"}, status=500)
