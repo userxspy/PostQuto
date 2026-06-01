@@ -353,10 +353,19 @@ async def api_upload_thumb(req):
         img_buffer.name = "poster.jpg"
         
         msg = await temp.BOT.send_photo(chat_id=BIN_CHANNEL, photo=img_buffer)
-        if not msg.photo:
+        if not msg or not msg.photo:
             return web.json_response({"error": "Telegram failed to generate Photo ID!"}, status=500)
             
-        new_thumb_id = msg.photo[-1].file_id
+        # ✅ FIX ACTIVE: Hydrogram में फोटो ऑब्जेक्ट से सबसे बड़े साइज का file_id निकालने का सही तरीका
+        try:
+            if hasattr(msg.photo, "sizes") and msg.photo.sizes:
+                new_thumb_id = msg.photo.sizes[-1].file_id
+            else:
+                new_thumb_id = msg.photo.file_id
+        except Exception as py_err:
+            logger.error(f"Fallback to direct file_id due to: {py_err}")
+            new_thumb_id = msg.photo.file_id
+            
         db_save_value = f"TG_ID:{new_thumb_id}"
         
         # 💾 [DB OVERRIDE] मोंगोडीबी में पुराने थंबनेल को हटाकर नया TG_ID लॉक करें
