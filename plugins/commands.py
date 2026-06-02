@@ -36,17 +36,6 @@ MINI_APP_URL = _build_mini_app_url(URL)
 
 
 # ─────────────────────────
-# HELPERS
-# ─────────────────────────
-async def auto_delete_messages(msg_ids, chat_id, client, delay):
-    await asyncio.sleep(delay)
-    try:
-        await client.delete_messages(chat_id=chat_id, message_ids=msg_ids)
-    except:
-        pass
-
-
-# ─────────────────────────
 # /start COMMAND
 # ─────────────────────────
 @Client.on_message(filters.command("start") & filters.incoming)
@@ -78,7 +67,7 @@ async def start(client, message):
             message.from_user.mention, message.from_user.id
         ))
 
-    # ✅ Premium Check (Admins Bypass)
+    # Premium Check (Admins Bypass)
     if IS_PREMIUM and message.from_user.id not in ADMINS and not await is_premium(message.from_user.id, client):
         return await message.reply_photo(
             random.choice(PICS),
@@ -114,8 +103,7 @@ async def start(client, message):
                 if IS_STREAM:
                     btn.insert(0, [InlineKeyboardButton("▶️ Watch / Download", callback_data=f"stream#{file_id}")])
 
-                # ✅ CRITICAL FIX: हमेशा डेटाबेस से ओरिजिनल 'file_ref' (लंबी टेलीग्राम आईडी) उठाएं, 
-                # ताकि 'TG_ID:' थंबनेल लॉक होने के बाद भी सेंड मीडिया कभी फेल या क्रैश न हो।
+                # हमेशा डेटा베이스 से ओरिजिनल 'file_ref' (लंबी टेलीग्राम आईडी) उठाएं
                 target_media = file.get('file_ref') if file.get('file_ref') else file_id
 
                 msg = await client.send_cached_media(
@@ -129,9 +117,10 @@ async def start(client, message):
                     del_msg = await msg.reply(
                         f"⚠️ This message will delete in {get_readable_time(PM_FILE_DELETE_TIME)}."
                     )
-                    asyncio.create_task(auto_delete_messages(
-                        [msg.id, del_msg.id], message.chat.id, client, PM_FILE_DELETE_TIME
-                    ))
+                    # ✅ NEW: कतरन रिकवरी इंजन — रैम टाइमर हटाकर मैसेजेस को मोंगोडीबी ऑटो-डिलीट कतार में पुश किया गया
+                    await db.add_to_delete_queue(message.chat.id, msg.id, PM_FILE_DELETE_TIME)
+                    await db.add_to_delete_queue(message.chat.id, del_msg.id, PM_FILE_DELETE_TIME)
+                    
                     if not hasattr(temp, 'PM_FILES'):
                         temp.PM_FILES = {}
                     temp.PM_FILES[msg.id] = {'file_msg': msg.id, 'note_msg': del_msg.id}
@@ -326,11 +315,15 @@ async def confirm_del(client, query):
 @Client.on_callback_query(filters.regex(r"^stream#"))
 async def stream_cb(client, query):
     file_id = query.data.split("#")[1]
-    await query.answer("🔗 Generating Links...")
+    await query.answer("🔗 Generating Links...", show_alert=False)
     try:
-        # ✅ FIX: 'stream#' दबाने पर भी ओरिजिनल file_ref पैच का इस्तेमाल करें
         file = await get_file_details(file_id)
-        target_media = file.get('file_ref') if file else file_id
+        
+        # ✅ FIX: यदि फ़ाइल डेटाबेस में नहीं मिलती है, तो गलत छोटी ID भेजकर क्रैश होने के बजाय अलर्ट दिखाएं
+        if not file:
+            return await query.answer("❌ File expired or removed from Database!", show_alert=True)
+            
+        target_media = file.get('file_ref') if file.get('file_ref') else file_id
 
         msg = await client.send_cached_media(BIN_CHANNEL, target_media)
         btn = [
@@ -355,6 +348,10 @@ async def close_cb(c, q):
         await q.message.delete()
         if hasattr(temp, 'PM_FILES') and q.message.id in temp.PM_FILES:
             try:
+                # कतार से भी साफ़ करें
+                await db.remove_from_delete_queue(q.message.chat.id, temp.PM_FILES[q.message.id]['file_msg'])
+                await db.remove_from_delete_queue(q.message.chat.id, temp.PM_FILES[q.message.id]['note_msg'])
+                
                 await c.delete_messages(q.message.chat.id, temp.PM_FILES[q.message.id]['note_msg'])
                 del temp.PM_FILES[q.message.id]
             except:
