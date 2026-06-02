@@ -60,7 +60,7 @@ async def get_spell_suggestion(query):
     return None
 
 # ─────────────────────────────────────────────
-# 🎨 UI HELPER FUNCTION
+# 🎨 UI HELPER FUNCTION (Locked to 12 Results via info.MAX_BTN)
 # ─────────────────────────────────────────────
 def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, next_off, simple_mode=True):
     list_items = [
@@ -73,9 +73,6 @@ def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, n
     
     cap = (f"<b>👑 Search: {search}\n🎬 Total: {total}\n📚 Source: {act_src.upper()}\n"
            f"📄 Page: {curr_page}/{total_pages}</b>\n\n{files_text}")
-
-    if total <= MAX_BTN:
-        return cap, None
 
     btn = []
     act_src_short = SRC_TO_SHORT.get(act_src, "pri")
@@ -96,6 +93,9 @@ def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, n
             tick = "✅" if c == act_src else "📂"
             col_btn.append(InlineKeyboardButton(f"{tick} {c.title()}", callback_data=f"coll_{req_id}_{key}_{SRC_TO_SHORT[c]}"))
         btn.append(col_btn)
+        
+    # ✅ ❌ Close बटन हमेशा बॉट के रिज़ल्ट लेआउट के नीचे एम्बेड रहेगा
+    btn.append([InlineKeyboardButton("❌ Close", callback_data=f"close_{req_id}")])
     
     return cap, InlineKeyboardMarkup(btn)
 
@@ -154,7 +154,6 @@ async def group_search(client, message):
                 try: await message.delete()
                 except: pass
                 msg = await message.reply("❌ Links not allowed!", quote=True)
-                # सिर्फ 5 सेकंड का इन्सटेंट अलर्ट है, इसलिए यहाँ डेटाबेस इंजन की आवश्यकता नहीं, डायरेक्ट डिलीट काफी है
                 await asyncio.sleep(5)
                 try: await msg.delete()
                 except: pass
@@ -182,14 +181,13 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
                 try:
                     m = await msg.reply(cap, reply_markup=InlineKeyboardMarkup(btn), quote=True)
                     if settings.get("auto_delete"):
-                        # ✅ NEW: रीस्टार्ट-प्रूफ डेटाबेस आधारित ऑटो-डिलीट इंजन कतार (Queue Injection)
                         await db.add_to_delete_queue(m.chat.id, m.id, DELETE_TIME)
                 except: pass
                 return
 
         try:
             m = await msg.reply(script.NOT_FILE_TXT.format(msg.from_user.mention, search), quote=True)
-            await db.add_to_delete_queue(m.chat.id, m.id, 10)  # नॉट फाउंड टेक्स्ट केवल 10 सेकंड रुकेगा
+            await db.add_to_delete_queue(m.chat.id, m.id, 10)
         except: pass
         return
 
@@ -202,7 +200,6 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
     try:
         m = await msg.reply(cap, reply_markup=markup, disable_web_page_preview=True, quote=True)
         if settings.get("auto_delete"):
-            # ✅ NEW: रिज़ल्ट्स मैसेज सीधे परमानेंट डेटाबेस कतार (Queue) में पुश करें
             await db.add_to_delete_queue(m.chat.id, m.id, DELETE_TIME)
     except Exception as e: 
         logger.error(f"Auto filter response error: {e}")
@@ -210,6 +207,25 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
 # ─────────────────────────────────────────────
 # 📤 CALLBACK HANDLERS
 # ─────────────────────────────────────────────
+@Client.on_callback_query(filters.regex(r"^close_"))
+async def close_callback(client, query):
+    """✅ FIX: क्लोज बटन पर मुख्य रिज़ल्ट मैसेज और कतार नोटिस (1h Delete Notice) दोनों एक साथ साफ़ करें"""
+    try:
+        chat_id = query.message.chat.id
+        current_msg_id = query.message.id
+        
+        # मुख्य मैसेज, उसका पिछला और अगला कतार नोटिस साफ करने के लिए पाइपलाइन कतार इंजेक्शन
+        msg_ids_to_clean = [current_msg_id, current_msg_id - 1, current_msg_id + 1]
+        
+        # कतार रिकॉर्ड्स को डेटाबेस से डिलीट करें ताकि बैकएंड इंजन उसे दुबारा साफ करने की कोशिश न करे
+        for mid in msg_ids_to_clean:
+            await db.remove_from_delete_queue(chat_id, mid)
+            
+        await client.delete_messages(chat_id, msg_ids_to_clean)
+    except Exception:
+        try: await query.message.delete()
+        except: pass
+
 @Client.on_callback_query(filters.regex(r"^spellchk_"))
 async def spell_check_handler(client, query):
     try:
@@ -230,7 +246,6 @@ async def spell_check_handler(client, query):
         settings = await get_settings(query.message.chat.id)
         is_simple_mode = settings.get("simple_mode", True)
         
-        # ✅ NEW: कतार अपडेट — पुराना टाइमस्टैम्प हटाकर नए डेटा के लिए रीसेट करें
         if settings.get("auto_delete"):
             await db.remove_from_delete_queue(query.message.chat.id, query.message.id)
 
@@ -238,7 +253,6 @@ async def spell_check_handler(client, query):
         await query.message.edit_text(cap, reply_markup=markup, disable_web_page_preview=True)
         
         if settings.get("auto_delete"):
-            # फ्रेश एडिटेड पेज के लिए एकदम नया फ्रेश डिलीट टाइम सेव करें
             await db.add_to_delete_queue(query.message.chat.id, query.message.id, DELETE_TIME)
             
     except Exception as e:
@@ -274,14 +288,11 @@ async def pagination_handler(client, query):
     
     cap, markup = get_filter_ui(search, files, total, act_src, offset, query.message.chat.id, req, key, next_off, is_simple_mode)
 
-    # ✅ NEW: मुख्य फिक्स — नया पेज एडिट करने से ठीक पहले पुराना कतार टाइमर डेटाबेस से साफ़ किया गया
     if settings.get("auto_delete"):
         await db.remove_from_delete_queue(query.message.chat.id, query.message.id)
 
     try: 
         await query.message.edit_text(cap, reply_markup=markup, disable_web_page_preview=True)
-        
-        # ✅ NEW: इस नए एडिटेड पेज के लिए डेटाबेस कतार में ताज़ा टाइमस्टैम्प फिर से लोड करें
         if settings.get("auto_delete"):
             await db.add_to_delete_queue(query.message.chat.id, query.message.id, DELETE_TIME)
     except: 
