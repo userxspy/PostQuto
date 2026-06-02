@@ -13,9 +13,9 @@ search_routes = web.RouteTableDef()
 # ─────────────────────────────────────────────
 # 📸 THUMBNAIL CONCURRENCY & CACHE (Koyeb Optimized)
 # ─────────────────────────────────────────────
-MAX_CACHE = 400             # ✅ FIX: कोएब के सीमित रैम एनवायरनमेंट के अनुसार ऑप्टिमाइज़्ड
+MAX_CACHE = 400             # ✅ कोएब के सीमित रैम एनवायरनमेंट के अनुसार ऑप्टिमाइज़्ड
 thumb_cache = {}
-thumb_semaphore = asyncio.Semaphore(5) # ✅ FIX: डेडलॉक से बचने के लिए सेमाफोर काउंट बढ़ाया गया
+thumb_semaphore = asyncio.Semaphore(5) # ✅ डेडलॉक से बचने के लिए सेमाफोर काउंट बढ़ाया गया
 
 # ─────────────────────────────────────────────
 # 🔒 STRICT SECURITY: Telegram initData HMAC Verification
@@ -55,7 +55,7 @@ async def get_user_role(req):
     return None, None
 
 # ─────────────────────────────────────────────
-# 🔍 SEARCH API
+# 🔍 SEARCH API (वेब और मिनी ऐप के लिए 21 रिज़ल्ट्स पर लॉक)
 # ─────────────────────────────────────────────
 @search_routes.get("/api/search")
 async def api_search(req):
@@ -74,7 +74,10 @@ async def api_search(req):
 
     flt_text = {"$text": {"$search": q}}
     flt_regex = {"file_name": re.compile(re.escape(q), re.IGNORECASE)}
+    
+    # ✅ FIX: बॉट की लिमिट (12) से अलग वेब ग्रिड लेआउट को परफेक्ट रखने के लिए इसे 21 किया गया
     all_m, tot, lim = [], 0, 21
+    
     tgt_cols = {col: COLLECTIONS[col]} if col in COLLECTIONS else COLLECTIONS
     col_counts, col_filters = {}, {}
 
@@ -99,7 +102,7 @@ async def api_search(req):
             remaining_skip -= count
             continue
         local_limit = lim - len(all_m)
-        # ✅ FIX: अनावश्यक भारी डेटा लोडिंग कर्सर को रोकने के लिए प्रोजेक्शन जोड़ा गया
+        # अनावश्यक भारी डेटा लोडिंग कर्सर को रोकने के लिए प्रोजेक्शन जोड़ा गया
         docs = await c.find(col_filters[n], {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "thumb_url": 1}).sort("_id", -1).skip(remaining_skip).limit(local_limit).to_list(length=local_limit)
         for d in docs: d["source_col"] = n.lower()
         all_m.extend(docs)
@@ -129,6 +132,7 @@ async def api_search(req):
     return web.json_response({
         "results": list(results_list),
         "total": tot,
+        # ✅ यहाँ भी 'lim' (21) के अनुसार 'next_offset' ऑटो-कैलकुलेट होगा ताकि पेजिनेशन परफेक्ट स्किप करे
         "next_offset": off + lim if off + lim < tot else "",
         "is_admin": role == "admin",
     })
@@ -155,9 +159,8 @@ async def get_telegram_thumb(req):
         return web.Response(body=thumb_cache[fid], content_type="image/jpeg", headers=headers)
 
     async with thumb_semaphore:
-        # डबल चेकिंग लॉजिक
         if len(thumb_cache) >= MAX_CACHE:
-            thumb_cache.clear() # ✅ FIX: कोएब रैम क्रैश (OOM) से बचने के लिए एग्रेसिव वाइपआउट
+            thumb_cache.clear() # कोएब रैम क्रैश (OOM) से बचने के लिए एग्रेसिव वाइपआउट
 
         if fid in thumb_cache:
             if thumb_cache[fid] == "NO_THUMB": return web.Response(status=404)
@@ -205,7 +208,6 @@ async def get_telegram_thumb(req):
                             {"$set": {"thumb_url": db_save_value}}
                         )
                     
-                    # ✅ NEW: पुराना इन-मेमोरी डिलीट हटाकर कतार को मोंगोडीबी ऑटो-डिलीट कतार में सुरक्षित डाला
                     await db.add_to_delete_queue(BIN_CHANNEL, msg.id, 5)
                     return web.Response(body=thumb_bytes, content_type="image/jpeg", headers=headers)
                 else:
@@ -240,7 +242,6 @@ async def setup_stream(req):
     if not fid: return web.Response(text="❌ Missing file_id!", status=400)
     try:
         msg = await temp.BOT.send_cached_media(chat_id=BIN_CHANNEL, file_id=fid)
-        # ✅ NEW: रैम टाइमर हटाकर संदेश को मोंगोडीबी ऑटो-डिलीट कतार में 1 घंटे (3600s) के लिए डाला
         await db.add_to_delete_queue(BIN_CHANNEL, msg.id, 3600)
         return web.HTTPFound(f"/{'download' if mode == 'download' else 'watch'}/{msg.id}")
     except Exception as e: return web.Response(text=f"❌ Error: {e}", status=500)
@@ -329,7 +330,7 @@ async def api_upload_thumb(req):
         if collection_field not in COLLECTIONS:
             return web.json_response({"error": "Invalid collection!"}, status=400)
 
-        # ⚡ [RAM CACHE CLEANING]
+        # [RAM CACHE CLEANING]
         thumb_cache.pop(file_id_field, None)
         doc = await COLLECTIONS[collection_field].find_one({"_id": file_id_field}, {"file_ref": 1, "file_id": 1})
         if doc:
@@ -343,7 +344,7 @@ async def api_upload_thumb(req):
         if not msg or not msg.photo:
             return web.json_response({"error": "Telegram failed to generate Photo ID!"}, status=500)
             
-        # ✅ FIX: Hydrogram / Pyrogram में फ़ोटो के सबसे बड़े आकार से फ़ाइल आईडी सुरक्षित रूप से निकालना
+        # Hydrogram / Pyrogram में फ़ोटो के सबसे बड़े आकार से फ़ाइल आईडी सुरक्षित रूप से निकालना
         try:
             if hasattr(msg.photo, "sizes") and msg.photo.sizes:
                 new_thumb_id = msg.photo.sizes[-1].file_id
