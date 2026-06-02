@@ -57,7 +57,8 @@ def parse_expire_time(e):
 
 def get_ist_str(dt):
     """प्रीमियम एक्सपायरी को सुंदर पठनीय स्ट्रिंग में रेंडर करता है"""
-    return dt.strftime("%d %B %Y, %I:%M %p") if dt else "Unknown" surcharge
+    # ✅ FIXED: 'surcharge' कबाड़ शब्द को हटाकर सिंटैक्स को 100% शुद्ध कर दिया गया है
+    return dt.strftime("%d %B %Y, %I:%M %p") if dt else "Unknown"
 
 async def safe_del(c, cid, mids):
     try: await c.delete_messages(cid, mids)
