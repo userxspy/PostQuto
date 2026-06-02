@@ -26,7 +26,6 @@ def check_cache_limit():
     if len(BUTTONS) > 300:
         BUTTONS.clear()
         temp.FILES.clear()
-        # ✅ FIX: कोएब की रैम से पुराने सर्च ऑब्जेक्ट्स को तुरंत हवा में उड़ाने के लिए फ़ोर्स गारबेज कलेक्शन
         gc.collect()
         logger.info("🧹 Bounded Dictionary RAM Cleaned & Flushed Successfully.")
 
@@ -72,7 +71,6 @@ def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, n
     ]
     files_text = "\n\n".join(list_items)
     
-    # ✅ FIX: कस्टमाइज्ड बोट रिज़ल्ट लिमिट (12) का उपयोग करके सटीक पेजिनेशन कैलकुलेशन
     total_pages = math.ceil(total / MAX_BOT_RESULTS)
     curr_page = (int(offset) // MAX_BOT_RESULTS) + 1
     
@@ -93,7 +91,6 @@ def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, n
     if nav: 
         btn.append(nav)
 
-    # यदि सिंपल मोड बंद (False) है, केवल तभी सोर्स बटन्स और ❌ Close बटन नीचे जुड़ेंगे
     if not simple_mode:
         col_btn = []
         for c in ["primary", "cloud", "archive"]:
@@ -102,16 +99,14 @@ def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, n
         btn.append(col_btn)
         btn.append([InlineKeyboardButton("❌ Close", callback_data=f"close_{req_id}")])
     else:
-        # ✅ FIX: सिंपल मोड में भी प्राइवेट चैट क्लैश रोकने के लिए हमेशा एक बेसिक क्लोज़ बटन सिंक रखें
         btn.append([InlineKeyboardButton("❌ Close Result", callback_data=f"close_{req_id}")])
     
     return cap, InlineKeyboardMarkup(btn)
 
 # ─────────────────────────────────────────────
-# ⚙️ INLINE GROUP SETTINGS UI CENTER (New Addition)
+# ⚙️ INLINE GROUP SETTINGS UI CENTER
 # ─────────────────────────────────────────────
 def get_settings_markup(settings):
-    """ग्रुप ओनर्स के लिए ऑन-द-फ्लाई सेटिंग्स टॉगल पैनल"""
     s_del = "✅ ON" if settings.get("auto_delete", True) else "❌ OFF"
     s_spl = "✅ ON" if settings.get("spell_check", True) else "❌ OFF"
     s_btn = "🔲 SIMPLE" if settings.get("simple_mode", True) else "🔳 FULL"
@@ -142,7 +137,6 @@ async def toggle_settings_callback(client, query):
         key = query.data.replace("set_toggle_", "")
         settings = await get_settings(query.message.chat.id)
         
-        # ऑन-द-फ्लाई मानों को पलटें (Toggle boolean state)
         settings[key] = not settings.get(key, True)
         await save_group_settings(query.message.chat.id, key, settings[key])
         
@@ -177,18 +171,17 @@ async def search_toggle(client, message):
     await message.reply(f"✅ Search is now **{'ENABLED' if state else 'DISABLED'}**")
 
 # ─────────────────────────────────────────────
-# 🔒 STRICT PREMIUM GATE PASSENGERS (No Free Entry Allowed)
+# 🔒 STRICT PREMIUM GATE PASSENGERS
 # ─────────────────────────────────────────────
 @Client.on_message(filters.private & filters.text & filters.incoming)
 async def pm_search(client, message):
     if not await is_valid_search(message): return
     uid = message.from_user.id
     
-    # ✅ FIX: स्ट्रिक्ट प्रीमियम मॉडल - फ्री यूज़र्स को तुरंत UPI लॉक स्क्रीन फ्लैश करें
     if uid not in ADMINS and not await is_premium(uid, client):
         return await message.reply_photo(
             random.choice(PICS), 
-            caption=script.PLAN_TXT.format(10, "@admin"), # info.py और Script.py प्लान सिंक
+            caption=script.PLAN_TXT.format(10, "@admin"), 
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Buy Premium Plan", callback_data="activate_plan")]])
         )
     
@@ -203,14 +196,10 @@ async def group_search(client, message):
     settings = await get_settings(chat_id)
     if not settings.get("search_enabled", True): return
     
-    # ✅ FIX: ग्रुप्स में भी अनधिकृत यूज़र्स को म्यूट/इग्नोर करने का सख्त सुरक्षा पास
     if user_id not in ADMINS and not await is_premium(user_id, client): return
 
     text_lower = message.text.lower()
     
-    # ❌ FIX: '@admin' वाला फालतू रिपोर्ट कचरा हटा दिया गया है (No Repetition / Admin-Premium Bot Only Match)
-
-    # ग्रुप्स में बाहरी कबाड़ लिंक्स भेजने वालों के खिलाफ एंटी-लिंक सुरक्षा गार्ड
     if "http" in text_lower or "t.me/" in text_lower:
         if re.search(r"(?:http|www\.|t\.me/)", text_lower):
             if not await is_check_admin(client, chat_id, user_id):
@@ -231,7 +220,6 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
     check_cache_limit() 
     search = msg.text.strip()
     
-    # ✅ FIX: मोंगोडीबी कर्सर को बोट के लिए १२ रिजल्ट्स पर टाइट बाइंड किया गया (MAX_BOT_RESULTS)
     files, next_offset, total, act_src = await get_search_results(search, MAX_BOT_RESULTS, 0, collection_type=collection_type)
 
     if not settings: settings = await get_settings(msg.chat.id)
@@ -287,6 +275,8 @@ async def close_callback(client, query):
     except Exception:
         try: await query.message.delete()
         except: pass
+    finally:
+        gc.collect()
 
 @Client.on_callback_query(filters.regex(r"^spellchk_"))
 async def spell_check_handler(client, query):
@@ -320,7 +310,12 @@ async def spell_check_handler(client, query):
     except Exception as e:
         logger.error(f"Spellcheck Callback Error: {e}")
         await query.answer("❌ Error during search!", show_alert=True)
+    finally:
+        gc.collect()
 
+# ─────────────────────────────────────────────
+# 🔄 PAGINATION & PERFECT TIMER RESET SYNCHRONIZER
+# ─────────────────────────────────────────────
 @Client.on_callback_query(filters.regex(r"^(nav_|coll_)"))
 async def pagination_handler(client, query):
     try:
@@ -350,14 +345,22 @@ async def pagination_handler(client, query):
     
     cap, markup = get_filter_ui(search, files, total, act_src, offset, query.message.chat.id, req, key, next_off, is_simple_mode)
 
+    # ⏰ १. पुराने लगे हुए टाइमर कतार (Delete Queue) को पहले डेटाबेस से साफ करो
     if settings.get("auto_delete"):
         await db.remove_from_delete_queue(query.message.chat.id, query.message.id)
 
     try: 
+        # २. टेलीग्राम पर नया पेज/रिज़ल्ट सफलतापूर्वक फ्लैश करें
         await query.message.edit_text(cap, reply_markup=markup, disable_web_page_preview=True)
+        
+        # ✅ FIX: आपके कड़े निर्देशानुसार टेक्स्ट एडिट होने के तुरंत बाद नया ५ मिनट का फ्रेश कतार टाइमर अलॉट कर दिया गया है
         if settings.get("auto_delete"):
             await db.add_to_delete_queue(query.message.chat.id, query.message.id, DELETE_TIME)
-    except: 
-        pass
+    except Exception as e:
+        logger.error(f"Pagination delivery failure: {e}")
+        # फॉलबैक सुरक्षा पास: यदि एडिट फेल हो जाए तो टाइमर को वापस कतार में लगा दो
+        if settings.get("auto_delete"):
+            await db.add_to_delete_queue(query.message.chat.id, query.message.id, DELETE_TIME)
         
     await query.answer()
+    gc.collect() # ओओएम कंटेनर सुरक्षा फ्लश
