@@ -3,26 +3,29 @@ import re
 import math
 import random
 import aiohttp
+import logging
 from hydrogram import Client, filters, enums
 from hydrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from info import ADMINS, DELETE_TIME, MAX_BTN, IS_PREMIUM, PICS, IS_STREAM, SPELL_CHECK
 from utils import is_premium, get_size, is_check_admin, temp, get_settings, save_group_settings
 from database.ia_filterdb import get_search_results
+from database.users_chats_db import db
 from Script import script  
+
+logger = logging.getLogger(__name__)
 
 BUTTONS = {}
 SRC_TO_SHORT = {"primary": "pri", "cloud": "cld", "archive": "arc"}
 SHORT_TO_SRC = {"pri": "primary", "cld": "cloud", "arc": "archive"}
 
-# 🕒 स्मार्ट ऑटो-डिलीट ट्रैकर
-SMART_TASKS = {}
-
+# ⚡ AGGRESSIVE RAM PROTECTION (Koyeb Free Tier Safe)
 def check_cache_limit():
-    if len(BUTTONS) > 500:
-        for k in list(BUTTONS.keys())[:100]:
-            BUTTONS.pop(k, None)
-            temp.FILES.pop(k, None)
+    """यदि कैशे कीज़ लिमिट पार करती हैं, तो कोएब रैम क्रैश (OOM) रोकने के लिए पुराने कबाड़ को तुरंत साफ़ करें।"""
+    if len(BUTTONS) > 400:
+        BUTTONS.clear()
+        temp.FILES.clear()
+        logger.info("🧹 RAM Cleaner Triggered: Local dictionary cache cleared safely.")
 
 async def is_valid_search(message):
     if not message.text or message.text.startswith("/"): return False
@@ -97,33 +100,6 @@ def get_filter_ui(search, files, total, act_src, offset, chat_id, req_id, key, n
     return cap, InlineKeyboardMarkup(btn)
 
 # ─────────────────────────────────────────────
-# 🕒 SMART INACTIVITY TRACKER (Inactivity Only)
-# ─────────────────────────────────────────────
-async def smart_delete_msg(bot_msg, user_msg=None, delay=300):
-    try:
-        await asyncio.sleep(delay)
-        
-        # 1. बोट का रिज़ल्ट मैसेज हमेशा डिलीट होगा
-        try: 
-            await bot_msg.delete()
-        except: 
-            pass
-            
-        # 2. यूज़र का मैसेज सिर्फ ग्रुप में डिलीट होगा, पीएम में छोड़ देगा
-        if user_msg and user_msg.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-            try: 
-                await user_msg.delete()
-            except: 
-                pass
-                
-    except asyncio.CancelledError:
-        # 🎯 जब यूज़र Next/Prev दबाएगा, तो पुराना टाइमर यहाँ बिना क्रैश किए रुक जाएगा
-        pass
-    finally:
-        # काम ख़त्म होने पर डिक्शनरी साफ़ करो
-        SMART_TASKS.pop(bot_msg.id, None)
-
-# ─────────────────────────────────────────────
 # 🔍 COMMAND HANDLERS
 # ─────────────────────────────────────────────
 @Client.on_message(filters.command("button_style"))
@@ -178,7 +154,10 @@ async def group_search(client, message):
                 try: await message.delete()
                 except: pass
                 msg = await message.reply("❌ Links not allowed!", quote=True)
-                asyncio.create_task(smart_delete_msg(msg, delay=5))
+                # सिर्फ 5 सेकंड का इन्सटेंट अलर्ट है, इसलिए यहाँ डेटाबेस इंजन की आवश्यकता नहीं, डायरेक्ट डिलीट काफी है
+                await asyncio.sleep(5)
+                try: await msg.delete()
+                except: pass
                 return
 
     await auto_filter(client, message, collection_type="all", settings=settings)
@@ -203,13 +182,14 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
                 try:
                     m = await msg.reply(cap, reply_markup=InlineKeyboardMarkup(btn), quote=True)
                     if settings.get("auto_delete"):
-                        SMART_TASKS[m.id] = asyncio.create_task(smart_delete_msg(m, msg, delay=300))
+                        # ✅ NEW: रीस्टार्ट-प्रूफ डेटाबेस आधारित ऑटो-डिलीट इंजन कतार (Queue Injection)
+                        await db.add_to_delete_queue(m.chat.id, m.id, DELETE_TIME)
                 except: pass
                 return
 
         try:
             m = await msg.reply(script.NOT_FILE_TXT.format(msg.from_user.mention, search), quote=True)
-            asyncio.create_task(smart_delete_msg(m, delay=5))
+            await db.add_to_delete_queue(m.chat.id, m.id, 10)  # नॉट फाउंड टेक्स्ट केवल 10 सेकंड रुकेगा
         except: pass
         return
 
@@ -222,8 +202,10 @@ async def auto_filter(client, msg, collection_type="all", settings=None):
     try:
         m = await msg.reply(cap, reply_markup=markup, disable_web_page_preview=True, quote=True)
         if settings.get("auto_delete"):
-            SMART_TASKS[m.id] = asyncio.create_task(smart_delete_msg(m, msg, delay=300))
-    except Exception as e: print(f"Error: {e}")
+            # ✅ NEW: रिज़ल्ट्स मैसेज सीधे परमानेंट डेटाबेस कतार (Queue) में पुश करें
+            await db.add_to_delete_queue(m.chat.id, m.id, DELETE_TIME)
+    except Exception as e: 
+        logger.error(f"Auto filter response error: {e}")
 
 # ─────────────────────────────────────────────
 # 📤 CALLBACK HANDLERS
@@ -248,19 +230,19 @@ async def spell_check_handler(client, query):
         settings = await get_settings(query.message.chat.id)
         is_simple_mode = settings.get("simple_mode", True)
         
-        # 🎯 स्पेलचेक पर क्लिक होते ही पुराने टाइमर को रिसेट करो
-        if query.message.id in SMART_TASKS:
-            old_task = SMART_TASKS.get(query.message.id)
-            if old_task and not old_task.done(): old_task.cancel()
+        # ✅ NEW: कतार अपडेट — पुराना टाइमस्टैम्प हटाकर नए डेटा के लिए रीसेट करें
+        if settings.get("auto_delete"):
+            await db.remove_from_delete_queue(query.message.chat.id, query.message.id)
 
         cap, markup = get_filter_ui(suggestion, files, total, act_src, 0, query.message.chat.id, query.from_user.id, key, next_offset, is_simple_mode)
         await query.message.edit_text(cap, reply_markup=markup, disable_web_page_preview=True)
         
         if settings.get("auto_delete"):
-            SMART_TASKS[query.message.id] = asyncio.create_task(smart_delete_msg(query.message, delay=300))
+            # फ्रेश एडिटेड पेज के लिए एकदम नया फ्रेश डिलीट टाइम सेव करें
+            await db.add_to_delete_queue(query.message.chat.id, query.message.id, DELETE_TIME)
             
     except Exception as e:
-        print(f"Spellcheck Callback Error: {e}")
+        logger.error(f"Spellcheck Callback Error: {e}")
         await query.answer("❌ Error during search!", show_alert=True)
 
 @Client.on_callback_query(filters.regex(r"^(nav_|coll_)"))
@@ -287,24 +269,21 @@ async def pagination_handler(client, query):
         return await query.answer(err, show_alert=True)
 
     temp.FILES[key] = files
-    
     settings = await get_settings(query.message.chat.id)
     is_simple_mode = settings.get("simple_mode", True)
     
     cap, markup = get_filter_ui(search, files, total, act_src, offset, query.message.chat.id, req, key, next_off, is_simple_mode)
 
-    # 🎯 मुख्य फिक्स: नया पेज दिखाने (Edit करने) से ठीक पहले पुराना 5 मिनट का टाइमर रोक (Cancel) दिया गया
-    if query.message.id in SMART_TASKS:
-        old_task = SMART_TASKS.get(query.message.id)
-        if old_task and not old_task.done():
-            old_task.cancel()
+    # ✅ NEW: मुख्य फिक्स — नया पेज एडिट करने से ठीक पहले पुराना कतार टाइमर डेटाबेस से साफ़ किया गया
+    if settings.get("auto_delete"):
+        await db.remove_from_delete_queue(query.message.chat.id, query.message.id)
 
     try: 
         await query.message.edit_text(cap, reply_markup=markup, disable_web_page_preview=True)
         
-        # ⏳ अब इस नए पेज के लिए एकदम नया फ्रेश 5 मिनट का टाइमर चालू (Reset) करो
+        # ✅ NEW: इस नए एडिटेड पेज के लिए डेटाबेस कतार में ताज़ा टाइमस्टैम्प फिर से लोड करें
         if settings.get("auto_delete"):
-            SMART_TASKS[query.message.id] = asyncio.create_task(smart_delete_msg(query.message, user_msg=None, delay=300))
+            await db.add_to_delete_queue(query.message.chat.id, query.message.id, DELETE_TIME)
     except: 
         pass
         
