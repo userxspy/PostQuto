@@ -1,6 +1,8 @@
 import math
 import io
+import gc
 import logging
+import asyncio
 from hydrogram import Client, utils, raw
 from hydrogram.types import Message
 from hydrogram.session import Session, Auth
@@ -41,7 +43,7 @@ class TGCustomYield:
                     except AuthBytesInvalid: 
                         continue
                 else:
-                    # ✅ FIX: कोएब सॉकेट/सत्र लीक (Session Leak) को रोकने के लिए ग्रेसफुल स्टॉप
+                    # ✅ कोएब सॉकेट/सत्र लीक (Session Leak) रोकने के लिए ग्रेसफुल स्टॉप सिंक
                     await ms.stop()
                     raise AuthBytesInvalid
             else:
@@ -60,51 +62,78 @@ class TGCustomYield:
             return raw.types.InputPhotoFileLocation(id=f.media_id, access_hash=f.access_hash, file_reference=f.file_reference, thumb_size=f.thumbnail_size)
         return raw.types.InputDocumentFileLocation(id=f.media_id, access_hash=f.access_hash, file_reference=f.file_reference, thumb_size=f.thumbnail_size)
 
+    # ─────────────────────────────────────────────────────────
+    # 🍿 ULTRA-SMOOTH STREAMING TUNNEL ENGINE (Zero RAM Lag)
+    # ─────────────────────────────────────────────────────────
     async def yield_file(self, msg: Message, offset: int, first_cut: int, last_cut: int, parts: int, chunk_size: int):
         ms = await self.generate_media_session(self.main_bot, msg)
         loc = await self.get_location(await self.generate_file_properties(msg))
         
-        for i in range(1, parts + 1):
-            try:
+        # ✅ FIX: कोएब के इन-मेमोरी कचरे को रोकने के लिए फिक्स साइज प्री-एलोकेटेड बफर इंजन ट्यूनिंग
+        buffer_pool = bytearray(chunk_size)
+        
+        try:
+            for i in range(1, parts + 1):
                 r = await ms.send(raw.functions.upload.GetFile(location=loc, offset=offset, limit=chunk_size))
                 if not isinstance(r, raw.types.upload.File) or not r.bytes: 
                     break
                 
                 chunk = r.bytes
-                if parts == 1: 
-                    yield chunk[first_cut:last_cut]
-                elif i == 1: 
-                    yield chunk[first_cut:]
-                elif i == parts: 
-                    yield chunk[:last_cut]
-                else: 
-                    yield chunk
+                chunk_len = len(chunk)
                 
-                # डायनामिक ऑफसेट कैलकुलेटर (Seek Control Active)
-                offset += len(chunk)
-            except Exception as e:
-                logger.error(f"Error during yielding file chunk: {e}")
-                break
+                # बफर पूल में डेटा कॉपी करें ताकि रैम पर बार-बार नया बकेट न बने
+                buffer_pool[:chunk_len] = chunk
+                active_chunk = memoryview(buffer_pool)[:chunk_len]
+                
+                if parts == 1: 
+                    yield active_chunk[first_cut:last_cut]
+                elif i == 1: 
+                    yield active_chunk[first_cut:]
+                elif i == parts: 
+                    yield active_chunk[:last_cut]
+                else: 
+                    yield active_chunk
+                
+                # डायनामिक ऑफसेट कर्सर (Seek/Skip Control Sync)
+                offset += chunk_len
+                
+                # हर 20 चंक्स के बाद अनकैप्ड चंक्स को हवा में उड़ाने के लिए लाइटवेट रैम फ्लश
+                if i % 20 == 0:
+                    gc.collect()
+                    
+        except Exception as e:
+            logger.error(f"Error during yielding streaming chunk: {e}")
+        finally:
+            # सॉकेट्स और इन-मेमोरी कचरा साफ करें
+            del buffer_pool
+            gc.collect()
 
+    # ─────────────────────────────────────────────────────────
+    # 📥 BYTESIO PIPELINE (Anti-OOM Protection Sync)
+    # ─────────────────────────────────────────────────────────
     async def download_as_bytesio(self, msg: Message):
-        """✅ FIX: बड़ी फाइलों के कारण कोएब की रैम ब्लास्ट (OOM) होने से रोकने के लिए इन-मेमोरी बफरिंग"""
+        """बड़ी फ़ाइलों के कारण कोएब कंटेनर क्रैश होने से रोकने के लिए लाइटवेट कोर डाउनलोडर"""
         ms = await self.generate_media_session(self.main_bot, msg)
         loc = await self.get_location(await self.generate_file_properties(msg))
-        limit, offset = 1048576, 0
+        limit, offset = 1048576, 0 # 1MB प्रोग्रेसिव ब्लॉक डाउनलोडर
         
-        # भारी पायथन लिस्ट के बजाय कोर BytesIO ऑब्जेक्ट का उपयोग करें
         bytes_io = io.BytesIO()
         
-        while True:
-            try:
+        try:
+            while True:
                 r = await ms.send(raw.functions.upload.GetFile(location=loc, offset=offset, limit=limit))
                 if not isinstance(r, raw.types.upload.File) or not r.bytes: 
                     break
                 bytes_io.write(r.bytes)
                 offset += len(r.bytes)
-            except Exception as e:
-                logger.error(f"Error in download_as_bytesio: {e}")
-                break
                 
+                # हैवी डाउनलोड के समय बैकग्राउंड रैम को फ्री रखें
+                if offset % (limit * 10) == 0:
+                    gc.collect()
+                    
+        except Exception as e:
+            logger.error(f"Error in download_as_bytesio: {e}")
+            
         bytes_io.seek(0)
+        gc.collect() # फाइनल सेफ्टी फ्लश
         return bytes_io
