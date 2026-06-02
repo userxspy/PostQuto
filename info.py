@@ -77,7 +77,7 @@ if not LOG_CHANNEL:
 # 🗄️ DATABASE CONNECTION URL
 # ─────────────────────────────────────────────
 DATABASE_URL = environ.get("DATABASE_URL", "")
-DATABASE_NAME = environ.get("DATABASE_NAME", "FastFinderBot")
+DATABASE_NAME = environ.get("DATABASE_NAME", "Cluster0")
 
 if not DATABASE_URL:
     logger.error("❌ DATABASE_URL missing")
