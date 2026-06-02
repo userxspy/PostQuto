@@ -1,14 +1,16 @@
 import re
 import time
 import asyncio
+import logging
 from hydrogram import Client, filters, enums
 from hydrogram.errors import FloodWait
 from info import ADMINS
-# ✅ मुख्य सिंक इम्पोर्ट
+# मुख्य सिंक इम्पोर्ट
 from database.ia_filterdb import save_file
 from hydrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from utils import temp, get_readable_time
 
+logger = logging.getLogger(__name__)
 lock = asyncio.Lock()
 
 @Client.on_callback_query(filters.regex(r'^index'))
@@ -17,7 +19,7 @@ async def index_files(bot, query):
     ident = data_parts[1]
     
     if ident == 'yes':
-        # कलेक्शन सिलेक्शन बटन दिखाएं (डेटाबेस के अनुसार सिंक)
+        # कलेक्शन सिलेक्शन बटन दिखाएं
         chat = data_parts[2]
         lst_msg_id = data_parts[3]
         skip = data_parts[4]
@@ -51,7 +53,7 @@ async def index_files(bot, query):
         await query.message.edit("📝 <b>Send the number of messages to skip:</b>\n\nSend <code>0</code> to start from beginning.")
         
         try:
-            msg = await bot.listen(chat_id=query.message.chat.id, user_id=query.from_user.id)
+            msg = await bot.listen(chat_id=query.message.chat.id, user_id=query.from_user.id, timeout=60)
             skip = int(msg.text)
             await msg.delete() # यूज़र का मैसेज डिलीट करें
         except:
@@ -87,10 +89,8 @@ async def index_files(bot, query):
         msg = query.message
         await msg.edit(f"Starting Indexing to <b>{collection.upper()}</b> collection...")
         
-        try:
-            chat = int(chat)
-        except:
-            pass
+        try: chat = int(chat)
+        except: pass
         
         await index_files_to_db(int(lst_msg_id), chat, msg, bot, int(skip), collection)
     
@@ -157,6 +157,8 @@ async def auto_index(bot, message):
 
 async def index_files_to_db(lst_msg_id, chat, msg, bot, skip, collection_type="primary"):
     start_time = time.time()
+    last_update_time = time.time() # फ्लडवेट प्रोटेक्शन टाइमर ट्रैकर
+    
     total_files = 0
     duplicate = 0
     errors = 0
@@ -169,7 +171,7 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, skip, collection_type="p
     async with lock:
         try:
             async for message in bot.iter_messages(chat, lst_msg_id, skip):
-                time_taken = get_readable_time(time.time()-start_time)
+                time_taken = get_readable_time(time.time() - start_time)
                 
                 if temp.CANCEL:
                     temp.CANCEL = False
@@ -189,8 +191,9 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, skip, collection_type="p
                 
                 current += 1
                 
-                # स्पैम कम करने के लिए हर 50 मैसेज पर प्रोग्रेस अपडेट करें
-                if current % 50 == 0:
+                # ✅ FIX: टेलीग्राम फ्लड प्रिवेंटर — हर 50 मैसेज + न्यूनतम 4 सेकंड का टाइम इंटरवल गैप अनिवार्य है
+                if current % 50 == 0 and (time.time() - last_update_time > 4):
+                    last_update_time = time.time()
                     btn = [[
                         InlineKeyboardButton('CANCEL', callback_data=f'index#cancel#{chat}#{lst_msg_id}#{skip}')
                     ]]
@@ -238,11 +241,12 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, skip, collection_type="p
                 media.caption = message.caption
                 # नाम को साफ़ और स्वच्छ करना (Safe Name Cleaning)
                 try:
-                    media.file_name = re.sub(r"@\w+|(_|\-|\.|\+)", " ", str(media.file_name)).strip()
+                    if getattr(media, 'file_name', None):
+                        media.file_name = re.sub(r"@\w+|(_|\-|\.|\+)", " ", str(media.file_name)).strip()
                 except:
                     pass
                 
-                # सिलेक्टेड कलेक्शन में सेव करें (अब ia_filterdb में यह शॉर्ट आईडी ऑटो-पैक करेगा)
+                # सिलेक्टेड कलेक्शन में सेव करें
                 sts = await save_file(media, collection_type=collection_type)
                 
                 if sts == 'suc':
@@ -253,9 +257,10 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot, skip, collection_type="p
                     errors += 1
                     
         except Exception as e:
+            logger.error(f"Indexing Crash Intercepted: {e}")
             await msg.reply(f'❌ Index canceled due to Error - {e}')
         else:
-            time_taken = get_readable_time(time.time()-start_time)
+            time_taken = get_readable_time(time.time() - start_time)
             await msg.edit(
                 f'<b>✅ Successfully Indexed!</b>\n'
                 f'📚 Collection: <code>{collection_type.upper()}</code>\n'
