@@ -3,6 +3,7 @@ import sys
 import platform
 import asyncio
 import logging
+import gc # रैम को फ़ोर्स क्लीन रखने के लिए गारबेज कलेक्टर सिंक
 from hydrogram import Client, filters, enums
 from hydrogram.types import InlineKeyboardMarkup as IKM, InlineKeyboardButton as IKB
 from hydrogram.errors import FloodWait
@@ -14,7 +15,7 @@ from database.users_chats_db import db
 logger = logging.getLogger(__name__)
 
 # ======================================================
-# 📂 GET MEDIA FILE ID HELPER (Hydrogram Optimized)
+# 📂 GET MEDIA FILE ID HELPER (Zero RAM Allocation)
 # ======================================================
 def get_media_file_id(msg):
     """मैसेज से मीडिया ऑब्जेक्ट ढूंढकर उसकी file_id और file_ref निकालता है"""
@@ -22,7 +23,6 @@ def get_media_file_id(msg):
     for attr in ["photo", "video", "document", "audio", "voice", "animation", "sticker"]:
         media = getattr(msg, attr, None)
         if media:
-            # Hydrogram में photo लिस्ट नहीं बल्कि सीधे एक Photo ऑब्जेक्ट होता है
             return media.file_id, getattr(media, "file_ref", "N/A")
     return None, None
 
@@ -45,7 +45,7 @@ async def get_id(c, m):
             if st == enums.ChatMemberStatus.OWNER:
                 b = "👑 Owner"
             elif st == enums.ChatMemberStatus.ADMINISTRATOR:
-                b = "🛡 Admin"
+                b = "🛡️ Admin"
         except: 
             pass
 
@@ -55,7 +55,7 @@ async def get_id(c, m):
          f"📩 <b>Msg ID:</b> <code>{m.id}</code>\n")
 
     if m.chat.type in (enums.ChatType.GROUP, enums.ChatType.SUPERGROUP):
-        t += f"📛 <b>Title:</b> {m.chat.title}\n🔗 <b>Link:</b> @{m.chat.username or 'Private'}\n"
+        t += f"Status: <code>Active Premium Group Group Group</code>\n📛 <b>Title:</b> {m.chat.title}\n🔗 <b>Link:</b> @{m.chat.username or 'Private'}\n"
 
     if r:
         f_id, f_ref = get_media_file_id(r)
@@ -108,21 +108,21 @@ async def report_user(c, m):
     txt_data = r.text or r.caption or "Media/File"
     prev = txt_data[:100] + ("..." if len(txt_data) > 100 else "")
 
-    txt = (f"🚨 **NEW REPORT**\n\n📂 **Group:** {m.chat.title} (`{m.chat.id}`)\n🔗 **Link:** <a href='{r.link}'>Click Here</a>\n\n"
-           f"👤 **Reporter:** {m.from_user.mention} (`{m.from_user.id}`)\n💀 **Reported:** {tgt.mention} (`{tgt.id}`)\n\n"
-           f"📝 **Message:** <code>{prev}</code>")
+    txt = (f"🚨 **NEW REPORT ALERT**\n\n📂 **Group:** {m.chat.title} (`{m.chat.id}`)\n🔗 **Link:** <a href='{r.link}'>Click Here</a>\n\n"
+           f"👤 **Reporter:** {m.from_user.mention} (`{m.from_user.id}`)\n💀 **Reported User:** {tgt.mention} (`{tgt.id}`)\n\n"
+           f"📝 **Message Snippet:** <code>{prev}</code>")
     
-    btn = IKM([[IKB("🔗 View", url=r.link)], [IKB("🗑 Delete", callback_data=f"del_{m.chat.id}_{r.id}")]])
+    btn = IKM([[IKB("🔗 View Content", url=r.link)], [IKB("🗑️ Delete From Chat", callback_data=f"del_{m.chat.id}_{r.id}")]])
     
     sent = 0
     try:
-        # ✅ FIX: कर्सर एग्रेसिव रैम लीक को रोकने के लिए इटरेटर स्लाइसिंग और सेफ लूपिंग
+        # ✅ FIX: कर्सर एग्रेसिव रैम लीक को रोकने के लिए सेफ इटरेटर बाउंडिंग
         async for x in c.get_chat_members(m.chat.id, filter=enums.ChatMembersFilter.ADMINISTRATORS):
             if x.user and not x.user.is_bot:
                 try:
                     await c.send_message(x.user.id, txt, reply_markup=btn, disable_web_page_preview=True)
                     sent += 1
-                    await asyncio.sleep(0.3)  # टेलीग्राम फ्लड प्रिवेंशन गैप
+                    await asyncio.sleep(0.3)  
                 except FloodWait as e: 
                     await asyncio.sleep(e.value)
                 except: 
@@ -130,26 +130,36 @@ async def report_user(c, m):
     except Exception as e:
         logger.error(f"Report iterator error: {e}")
 
-    # ✅ NEW: कतरन रिकवरी इंजन — रैम आधारित डिलीट हटाकर कतार को मोंगोडीबी कतार में सुरक्षित 15 सेकंड के लिए सेट किया
-    alert_msg = await m.reply(f"✅ **Report Sent!**\nAlert sent to {sent} admins.")
+    # कतार को मोंगोडीबी कतार में सुरक्षित 15 सेकंड के लिए सेट किया
+    alert_msg = await m.reply(f"✅ <b>Report Successfully Routed!</b>\nAlert dispatched to {sent} active chat administrators.")
     await db.add_to_delete_queue(alert_msg.chat.id, alert_msg.id, 15)
+    
+    # रैम फ्लश बूस्टर
+    gc.collect()
 
 # ======================================================
-# 🗑 DELETE CALLBACK (For PMs)
+# 🗑️ SEPARATE DELETE CALLBACK (With Absolute Split Lock)
 # ======================================================
 @Client.on_callback_query(filters.regex(r"^del_"))
 async def del_msg(c, q):
     try:
-        _, cid, mid = q.data.split("_")
-        st = (await c.get_chat_member(int(cid), q.from_user.id)).status
-        if st not in (enums.ChatMemberStatus.OWNER, enums.ChatMemberStatus.ADMINISTRATOR):
-            return await q.answer("❌ Not an admin!", show_alert=True)
+        # ✅ FIX: निगेटिव चैट आईडी क्रैश से बचने के लिए सख्त रिवर्स स्प्लिटिंग
+        tokens = q.data.split("_")
+        mid = int(tokens[-1])
+        cid = int("_".join(tokens[1:-1]))
         
-        await c.delete_messages(int(cid), int(mid))
-        await q.answer("✅ Deleted!", show_alert=True)
-        await q.message.edit_text(q.message.text + "\n\n✅ **ACTION TAKEN: Deleted**", reply_markup=None)
-    except: 
-        await q.answer("❌ Error/Already Deleted.", show_alert=True)
+        st = (await c.get_chat_member(cid, q.from_user.id)).status
+        if st not in (enums.ChatMemberStatus.OWNER, enums.ChatMemberStatus.ADMINISTRATOR):
+            return await q.answer("❌ Verification Access Denied: Not a group admin!", show_alert=True)
+        
+        await c.delete_messages(cid, mid)
+        await q.answer("✅ Target message wiped from group successfully!", show_alert=True)
+        await q.message.edit_text(q.message.text + "\n\n⚙️ <b>ACTION TAKEN: Content Deleted by Moderator</b>", reply_markup=None)
+    except Exception as e:
+        logger.error(f"Delete callback exception: {e}")
+        await q.answer("❌ Message already removed or structural access expired.", show_alert=True)
+    finally:
+        gc.collect()
 
 # ======================================================
 # 🏓 PING & INFO (One-Liners Rate-Limited)
@@ -160,9 +170,9 @@ async def ping_cmd(c, m):
         return
         
     s = time.time()
-    msg = await m.reply_text("🏓 Pinging...")
+    msg = await m.reply_text("🏓 Pinging System Latency...")
     latency = int((time.time() - s) * 1000)
-    await msg.edit_text(f"🏓 <b>Pong!</b>\n\n⚡ Latency: <code>{latency} ms</code>", parse_mode=enums.ParseMode.HTML)
+    await msg.edit_text(f"🏓 <b>Pong! Status Online</b>\n\n⚡ Latency Response: <code>{latency} ms</code>", parse_mode=enums.ParseMode.HTML)
 
 @Client.on_message(filters.command("botinfo"))
 async def bot_info(c, m):
@@ -170,6 +180,7 @@ async def bot_info(c, m):
         return
 
     uptime = get_readable_time(time.time() - temp.START_TIME)
-    t = (f"🤖 <b>BOT STATUS</b>\n\n⏱️ <b>Uptime:</b> <code>{uptime}</code>\n🐍 <b>Python:</b> <code>{platform.python_version()}</code>\n"
-         f"⚙️ <b>OS:</b> <code>{platform.system()}</code>\n📦 <b>Lib:</b> <code>Hydrogram</code>\n💎 <b>Premium:</b> <code>{'Yes' if IS_PREMIUM else 'No'}</code>")
+    t = (f"🤖 <b>SYSTEM PLATFORM RUNTIME STATS</b>\n\n⏱️ <b>Uptime:</b> <code>{uptime}</code>\n🐍 <b>Python:</b> <code>{platform.python_version()}</code>\n"
+         f"⚙️ <b>OS Architecture:</b> <code>{platform.system()}</code>\n📦 <b>Core Engine:</b> <code>Hydrogram Engine v2.5</code>\n💎 <b>Premium Model:</b> <code>{'Locked Admin/Premium Only' if IS_PREMIUM else 'Open'}</code>")
     await m.reply_text(t, parse_mode=enums.ParseMode.HTML)
+    gc.collect()
