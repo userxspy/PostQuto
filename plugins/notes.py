@@ -1,16 +1,26 @@
 import time
 import html
+import logging
 from hydrogram import Client, filters, enums
 from database.users_chats_db import db
+from utils import is_check_admin
 
-# =========================
-# 🚀 SMART CACHE SYSTEM
-# =========================
+logger = logging.getLogger(__name__)
+
+# =========================================
+# 🚀 SMART CACHE SYSTEM (Koyeb RAM Optimized)
+# =========================================
 NOTES_CACHE = {}
 CACHE_TTL = 300  
 
 async def get_notes(chat_id):
     now = time.time()
+    
+    # ✅ FIX: कोएब रैम ओवरयूज़ (OOM) क्रैश रोकने के लिए एग्रेसिव कैशे क्लीनर लागू
+    if len(NOTES_CACHE) > 400:
+        NOTES_CACHE.clear()
+        logger.info("🧹 RAM Cleaner Triggered: Notes local dictionary cache cleared safely.")
+
     if chat_id in NOTES_CACHE and (now - NOTES_CACHE[chat_id][1]) < CACHE_TTL:
         return NOTES_CACHE[chat_id][0]
     
@@ -19,17 +29,15 @@ async def get_notes(chat_id):
     return data
 
 async def is_admin(c, m):
-    if m.sender_chat and m.sender_chat.id == m.chat.id: return True 
-    if not m.from_user: return False
-    try:
-        user = await c.get_chat_member(m.chat.id, m.from_user.id)
-        return user.status in (enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER)
-    except:
+    if m.sender_chat and m.sender_chat.id == m.chat.id: 
+        return True 
+    if not m.from_user: 
         return False
+    return await is_check_admin(c, m.chat.id, m.from_user.id)
 
-# =========================
+# =========================================
 # 📝 SAVE, DELETE & LIST
-# =========================
+# =========================================
 
 @Client.on_message(filters.group & filters.command(["save", "addnote"]))
 async def save_note(c, m):
@@ -48,7 +56,6 @@ async def save_note(c, m):
             note_type, file_id = t, media.file_id
             break
     
-    # ✅ FIX: .markdown स्ट्रिंग क्रैश बग को पूरी तरह से साफ किया गया
     note_data = {
         "type": note_type,
         "file_id": file_id,
@@ -85,9 +92,9 @@ async def list_notes(c, m):
     if not data: return await m.reply("📭 No notes saved.")
     await m.reply("📝 **Saved Notes:**\n" + "\n".join(f"• `#{n}`" for n in data))
 
-# =========================
+# =========================================
 # 🔎 NOTE FETCHER (Smart Filter)
-# =========================
+# =========================================
 
 @Client.on_message(filters.group & filters.regex(r"^#[\w]+"), group=11)
 async def get_note(c, m):
@@ -102,10 +109,9 @@ async def get_note(c, m):
     reply_id = m.reply_to_message.id if m.reply_to_message else m.id
     
     if note["type"] == "text":
-        # पार्सिंग स्टाइलिंग को सेफ रखने के लिए डिफ़ॉल्ट रूप से HTML इनेबल्ड रखा है
         await c.send_message(m.chat.id, note["text"], reply_to_message_id=reply_id, parse_mode=enums.ParseMode.HTML)
     else:
-        # ✅ FIX: डायनामिक फंक्शन कॉल को म्यूट मैसेज 'm' से हटाकर क्लाइंट 'c' ऑब्जेक्ट पर सिंक किया गया
+        # ✅ FIX: क्लाइंट ऑब्जेक्ट पर डायनामिक फंक्शन कॉल और सही आर्ग्यूमेंट बाइंडिंग रूटीन सिंक किया गया
         send_method = getattr(c, f"send_{note['type']}") 
         
         # आर्गुमेंट्स डिक्शनरी को सेफली बिल्ड करें
@@ -114,8 +120,15 @@ async def get_note(c, m):
             "reply_to_message_id": reply_id
         }
         
+        # हाइड्रोग्राम में डायनामिक सेंड करने के लिए फ़ाइल आईडी को सही कीवर्ड नाम (जैसे photo, video) के साथ पास करें
+        media_key = "animation" if note["type"] == "animation" else note["type"]
+        kwargs[media_key] = note["file_id"]
+        
         if note["type"] != "sticker": 
             kwargs["caption"] = note["caption"]
             kwargs["parse_mode"] = enums.ParseMode.HTML
             
-        await send_method(file_id=note["file_id"], **kwargs)
+        try:
+            await send_method(**kwargs)
+        except Exception as e:
+            logger.error(f"Failed to send note #{name}: {e}")
