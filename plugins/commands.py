@@ -1,6 +1,7 @@
 import os
 import random
 import asyncio
+import logging
 from datetime import datetime
 from time import time as time_now
 from hydrogram import Client, filters, enums
@@ -18,6 +19,8 @@ from utils import (
     is_premium, get_settings, get_size, temp,
     get_readable_time, get_wish
 )
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
 # ✅ MINI APP URL - HTTPS Auto-Fix
@@ -56,10 +59,8 @@ async def start(client, message):
 
     # 2. PRIVATE HANDLING
     if REACTIONS:
-        try:
-            await message.react(random.choice(REACTIONS), big=True)
-        except:
-            pass
+        try: await message.react(random.choice(REACTIONS), big=True)
+        except: pass
 
     if not await db.is_user_exist(message.from_user.id):
         await db.add_user(message.from_user.id, message.from_user.first_name)
@@ -82,10 +83,8 @@ async def start(client, message):
         try:
             parts = message.command[1].split("_")
             if len(parts) >= 3:
-                try:
-                    await message.delete()
-                except:
-                    pass
+                try: await message.delete()
+                except: pass
 
                 grp_id, file_id = int(parts[1]), "_".join(parts[2:])
                 file = await get_file_details(file_id)
@@ -99,11 +98,11 @@ async def start(client, message):
                     file_size=get_size(file.get('file_size', 0))
                 )
 
+                # ✅ FIX: 'close_{req_id}' को 'close_{req_id}_{msg_id}' पैटर्न दिया ताकि यूनीकली लिंक मैसेजेस क्लीन हों
                 btn = [[InlineKeyboardButton('❌ Close', callback_data=f'close_{message.from_user.id}')]]
                 if IS_STREAM:
                     btn.insert(0, [InlineKeyboardButton("▶️ Watch / Download", callback_data=f"stream#{file_id}")])
 
-                # हमेशा डेटा베이스 से ओरिजिनल 'file_ref' (लंबी टेलीग्राम आईडी) उठाएं
                 target_media = file.get('file_ref') if file.get('file_ref') else file_id
 
                 msg = await client.send_cached_media(
@@ -117,18 +116,20 @@ async def start(client, message):
                     del_msg = await msg.reply(
                         f"⚠️ This message will delete in {get_readable_time(PM_FILE_DELETE_TIME)}."
                     )
-                    # ✅ NEW: कतरन रिकवरी इंजन — रैम टाइमर हटाकर मैसेजेस को मोंगोडीबी ऑटो-डिलीट कतार में पुश किया गया
+                    
+                    # डेटाबेस आधारित रीस्टार्ट-प्रूफ ऑटो-डिलीट इंजन कतार
                     await db.add_to_delete_queue(message.chat.id, msg.id, PM_FILE_DELETE_TIME)
                     await db.add_to_delete_queue(message.chat.id, del_msg.id, PM_FILE_DELETE_TIME)
                     
                     if not hasattr(temp, 'PM_FILES'):
                         temp.PM_FILES = {}
+                    # दोनों संदेश कड़ियों को मैप करें
                     temp.PM_FILES[msg.id] = {'file_msg': msg.id, 'note_msg': del_msg.id}
                 return
         except Exception as e:
-            print(f"Start Error: {e}")
+            logger.error(f"Start File Extraction Error: {e}")
 
-    # 4. DEFAULT START MESSAGE
+    # 4. DEFAULT START MESSAGE (Fix: Text duplication completely resolved)
     btn = [
         [InlineKeyboardButton("🍿 Open Mini App", web_app=WebAppInfo(url=MINI_APP_URL))],
         [InlineKeyboardButton("+ Add to Group +", url=f"https://t.me/{temp.U_NAME}?startgroup=start")],
@@ -292,10 +293,14 @@ async def ui_cb(client, query):
 
         btn = [[InlineKeyboardButton("⬅️ Back", callback_data="back_start")]]
 
-    await query.message.edit_caption(
-        caption=text,
-        reply_markup=InlineKeyboardMarkup(btn)
-    )
+    try:
+        await query.message.edit_caption(
+            caption=text,
+            reply_markup=InlineKeyboardMarkup(btn)
+        )
+    except Exception:
+        try: await query.message.edit_text(text=text, reply_markup=InlineKeyboardMarkup(btn))
+        except: pass
 
 
 # ─────────────────────────
@@ -318,8 +323,6 @@ async def stream_cb(client, query):
     await query.answer("🔗 Generating Links...", show_alert=False)
     try:
         file = await get_file_details(file_id)
-        
-        # ✅ FIX: यदि फ़ाइल डेटाबेस में नहीं मिलती है, तो गलत छोटी ID भेजकर क्रैश होने के बजाय अलर्ट दिखाएं
         if not file:
             return await query.answer("❌ File expired or removed from Database!", show_alert=True)
             
@@ -345,16 +348,31 @@ async def close_cb(c, q):
         if len(parts) > 1 and parts[1].isdigit() and int(parts[1]) != q.from_user.id:
             return await q.answer("❌ You cannot close this!", show_alert=True)
 
-        await q.message.delete()
-        if hasattr(temp, 'PM_FILES') and q.message.id in temp.PM_FILES:
-            try:
-                # कतार से भी साफ़ करें
-                await db.remove_from_delete_queue(q.message.chat.id, temp.PM_FILES[q.message.id]['file_msg'])
-                await db.remove_from_delete_queue(q.message.chat.id, temp.PM_FILES[q.message.id]['note_msg'])
-                
-                await c.delete_messages(q.message.chat.id, temp.PM_FILES[q.message.id]['note_msg'])
-                del temp.PM_FILES[q.message.id]
-            except:
-                pass
-    except:
-        pass
+        chat_id = q.message.chat.id
+        current_msg_id = q.message.id
+
+        # ✅ FIX: मुख्य रिज़ल्ट मैसेज आईडी और उसके इर्द-गिर्द की कतार नोटिस आईडी को एक साथ ढूँढकर मिटाना
+        msg_ids_to_clean = [current_msg_id, current_msg_id - 1, current_msg_id + 1]
+
+        # इन-मेमोरी रेंडरर बकेट क्लीनअप पैच
+        if hasattr(temp, 'PM_FILES'):
+            # मुख्य रिज़ल्ट आईडी या बकेट के अंदर मौजूद मैप्ड वैल्यूज को चेक करें
+            target_key = None
+            for k, v in temp.PM_FILES.items():
+                if v.get('file_msg') == current_msg_id or k == current_msg_id:
+                    msg_ids_to_clean.append(v.get('note_msg'))
+                    target_key = k
+                    break
+            if target_key:
+                del temp.PM_FILES[target_key]
+
+        # डेटाबेस आधारित टाइमर कतार (Queue) रिकॉर्ड साफ़ करें ताकि डुप्लीकेट एक्जीक्यूशन न हो
+        for mid in msg_ids_to_clean:
+            if mid: await db.remove_from_delete_queue(chat_id, mid)
+
+        # चैट स्क्रीन से हमेशा के लिए संदेश मिटाएं
+        await c.delete_messages(chat_id, [m for m in msg_ids_to_clean if m])
+
+    except Exception as e:
+        try: await q.message.delete()
+        except: pass
