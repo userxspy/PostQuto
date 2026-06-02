@@ -5,14 +5,13 @@ import re
 import gc
 import logging
 from hydrogram import Client, filters
-from hydrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from info import ADMINS, BIN_CHANNEL
 from utils import get_readable_time
 from database.ia_filterdb import COLLECTIONS
 
 logger = logging.getLogger(__name__)
 
-# प्रोग्रेस बार बनाने के लिए सुपर-लाइटवेट यूटिलिटी फंक्शन
+# प्रोग्रेस बार बनाने के लिए ओरिजिनल यूटिलिटी फंक्शन
 def make_progress_bar(current, total, length=12):
     if total == 0:
         return "[░░░░░░░░░░░░] 0%"
@@ -25,10 +24,10 @@ def make_progress_bar(current, total, length=12):
 # 🧠 CORE ENGINE — Centralized Thumbnail Warmup Process
 # ─────────────────────────────────────────────────────────
 async def start_warmup_engine(client, status_msg, user_id):
-    """बिना कोड रिपिटिशन के कमांड और बटन दोनों जगह से चलने वाला मुख्य वार्मअप कोर इंजन"""
-    logger.info(f"⚡ [WARMUP] Activating structural warmup engine triggered by: {user_id}")
+    """पहले वाले कोड की 100% स्टेबल स्पीड और डिले रूल्स पर आधारित वार्मअप इंजन"""
+    logger.info(f"⚡ [WARMUP] Starting thumbnail warmup process for user: {user_id}")
     
-    # सिर्फ उन डॉक्यूमेंट्स को टारगेट करें जिनमें थंबनेल गायब है या 'TG_ID:' फॉर्मेट में लॉक नहीं है
+    # सिर्फ उन डॉक्यूमेंट्स को टारगेट करें जिनमें थंबनेल गायब है या 'TG_ID:' फॉर्मेट में नहीं है
     query = {
         "$or": [
             {"thumb_url": None},
@@ -40,30 +39,31 @@ async def start_warmup_engine(client, status_msg, user_id):
     total_to_process = 0
     col_counts = {}
     
-    # तीनों कलेक्शंस से पेंडिंग काउंट्स का लाइव मैट्रिक्स प्राप्त करें
+    # तीनों कलेक्शंस से पेंडिंग काउंट्स निकालें
     for name, collection in COLLECTIONS.items():
         count = await collection.count_documents(query)
         col_counts[name] = count
         total_to_process += count
         
     if total_to_process == 0:
-        logger.info("🎉 [WARMUP] All files are already beautifully warmed up in Database.")
-        return await status_msg.edit("<b>🎉 Everything is Up to Date!</b>\n\nAll files inside Primary, Cloud, and Archive collections already have verified thumbnail cache locks.")
+        logger.info("🎉 [WARMUP] All files are already warmed up. No pending thumbnails!")
+        return await status_msg.edit("🎉 **Everything is up to date!** All files already have locked thumbnails.")
 
-    await status_msg.edit(f"📊 <b>Found {total_to_process} pending files.</b>\nInitializing single-bot high-speed stream pipeline...")
+    logger.info(f"📊 [WARMUP] Total pending files detected across collections: {total_to_process}")
+    await status_msg.edit(f"📊 **Found {total_to_process} pending files.**\nInitializing single-bot stream pipeline...")
     
     processed_count = 0
     success_count = 0
     start_time = time.time()
 
-    # मुख्य कलेक्शंस हॉपिंग लूप
+    # मुख्य कलेक्शंस लूप
     for col_name, collection in COLLECTIONS.items():
         if col_counts[col_name] == 0:
             continue
             
-        logger.info(f"📁 [WARMUP] Processing collection cluster: {col_name.upper()}")
+        logger.info(f"📁 [WARMUP] Processing collection library: {col_name.upper()}")
         
-        # ✅ FIX: कोएब रैम लीक रोकने के लिए केवल आवश्यक फील्ड्स प्रोजेक्ट की गईं (Zero RAM Overload)
+        # कोएब रैम को सुरक्षित रखने के लिए केवल आवश्यक फील्ड्स प्रोजेक्ट करें
         cursor = collection.find(query, {"_id": 1, "file_ref": 1, "file_id": 1, "file_name": 1})
         
         async for doc in cursor:
@@ -72,81 +72,96 @@ async def start_warmup_engine(client, status_msg, user_id):
                 continue
                 
             processed_count += 1
-            file_name_log = doc.get('file_name', 'Unknown File')[:35]
+            file_name_log = doc.get('file_name', 'Unknown File')[:35]  # कोयब लॉग के लिए लिमिटर
             
             try:
-                # बोट द्वारा टेलीग्राम चैनल पर फाइल भेजकर थंबनेल आईडी खींचने का मैकेनिज्म
+                # पहले टेलीग्राम पर भेजें
+                logger.info(f"📥 [TG FETCH] Fetching from Telegram for File ID: {fid} (Warmup Mode)")
                 msg = await client.send_cached_media(chat_id=BIN_CHANNEL, file_id=fid)
                 thumb_id = None
                 
+                # वीडियो या डॉक्यूमेंट से ओरिजिनल थंबनेल आईडी एक्सट्रैक्ट करें
                 if msg.video and msg.video.thumbs and len(msg.video.thumbs) > 0:
                     thumb_id = msg.video.thumbs[0].file_id
                 elif msg.document and msg.document.thumbs and len(msg.document.thumbs) > 0:
                     thumb_id = msg.document.thumbs[0].file_id
 
-                # 🛑 सख्त नियम: थंबनेल जनरेट होने पर ही डेटाबेस मॉडिफाई होगा (No Fake Entry)
+                # 🛑 सख्त नियम: थंबनेल जनरेट होने पर ही डेटाबेस मॉडिफाई होगा
                 if thumb_id:
                     db_save_value = f"TG_ID:{thumb_id}"
+                    
+                    # डेटाबेस में सेव करें
                     res = await collection.update_one({"_id": doc["_id"]}, {"$set": {"thumb_url": db_save_value}})
                     if res.modified_count:
                         success_count += 1
-                        print(f"💾 [DB LOCK] ({processed_count}/{total_to_process}) -> ✅ SUCCESS: {file_name_log}", flush=True)
+                        # कोयब (Koyeb) के लाइव लॉग्स में प्रिंट करें
+                        print(f"💾 [NATIVE SAVE] Successfully locked in DB ({processed_count}/{total_to_process}) -> ✅ SUCCESS: {file_name_log}", flush=True)
                 else:
-                    print(f"🚫 [NO THUMB EMBED] Skipping database write operation for: {file_name_log}", flush=True)
+                    # अगर थंबनेल नहीं मिला तो DB मॉडिफाई नहीं करेंगे, बस लॉग प्रिंट होगा
+                    print(f"🚫 [NO THUMB] Telegram did not return any embedded thumb for: {file_name_log} (Skipping DB lock)", flush=True)
                 
-                # टेलीग्राम इनबॉक्स कैश तुरंत उड़ाएं
+                # टेलीग्राम का कैश मैसेज तुरंत डिलीट करें
                 asyncio.create_task(msg.delete())
                 
-                # 🛡️ रेट लिमिट और फ्लडवेट से बचने के लिए 1 से 3 सेकंड का सुरक्षित रैंडम डिले
-                await asyncio.sleep(random.uniform(1.0, 3.0))
+                # 🛡️ ✅ पहले वाले कोड का ओरिजिनल 1 से 5 सेकंड का रैंडम गैप (Anti-Flood Wait Lock)
+                # यह नियम आपके बॉट सेशन को टेलीग्राम की नज़रों में 100% ह्यूमन (Human) और सुरक्षित रखेगा
+                sleep_time = random.uniform(1.0, 5.0)
+                await asyncio.sleep(sleep_time)
                 
             except Exception as e:
                 err_text = str(e)
+                # बैकअप के तौर पर अगर फिर भी Flood Wait आ जाए तो उसे संभालें
                 if "FLOOD_WAIT" in err_text or "420" in err_text:
                     match = re.search(r'wait of (\d+) second', err_text)
                     wait_time = int(match.group(1)) if match else 30
-                    print(f"⏳ [FLOOD ACTIVE] Sleeping for {wait_time + 5}s to keep the bot session safe...", flush=True)
+                    print(f"⏳ [FLOOD WAIT] Telegram Rate Limit Hit! Sleeping for {wait_time + 10}s during warmup...", flush=True)
+                    
                     try: 
-                        await status_msg.edit(f"⏳ <b>Telegram Flood Wait Activated!</b>\nSleeping for `{wait_time + 5}` seconds to prevent container ban...")
-                    except: pass
-                    await asyncio.sleep(wait_time + 5)
+                        await status_msg.edit(f"⏳ **Telegram Flood Wait Active!**\nSleeping for `{wait_time + 10}` seconds to keep the bot session safe...")
+                    except: 
+                        pass
+                    
+                    await asyncio.sleep(wait_time + 10)
                 elif "file reference" in err_text.lower() or "bad request" in err_text.lower():
-                    print(f"❌ [BROKEN REF] Defective Telegram File Reference ID Skipped: {file_name_log}", flush=True)
+                    print(f"❌ [ERROR] Broken/Invalid Telegram File Reference ID: {file_name_log}", flush=True)
                 else:
-                    print(f"❌ [WARN] Processing failed for target: {err_text[:50]}", flush=True)
-                    await asyncio.sleep(2)
+                    print(f"❌ [ERROR] Processing failed for doc: {err_text[:60]}", flush=True)
+                    await asyncio.sleep(3)
 
-            # 📊 प्रोग्रेस बार अपडेट मैकेनिज्म (हर 10 फाइल्स कंप्लीट होने पर एडिट होगा ताकि एपीआई लोड न बढ़े)
+            # 📊 टेलीग्राम प्रोग्रेस बार अपडेट मैकेनिज्म (हर 10 फाइल्स कंप्लीट होने पर एडिट होगा)
             if processed_count % 10 == 0 or processed_count == total_to_process:
                 p_bar = make_progress_bar(processed_count, total_to_process, length=12)
                 
+                # प्रति फाइल औसतन समय के आधार पर सटीक ETA कैलकुलेशन
                 elapsed_time = time.time() - start_time
                 avg_time_per_file = elapsed_time / processed_count
                 eta_seconds = (total_to_process - processed_count) * avg_time_per_file
                 
                 status_text = (
-                    f"⚡ <b>Fast Finder - Thumbnail Warmup Engine</b>\n\n"
-                    f"📁 <b>Target Storage:</b> `{col_name.upper()}`\n"
-                    f"📊 <b>Progress Status:</b> `{processed_count}/{total_to_process}` Files\n"
-                    f"✨ <b>Successfully Locked:</b> `{success_count}` Thumbs\n"
-                    f"⏳ <b>Estimated Time Left:</b> `{get_readable_time(eta_seconds)}`\n\n"
+                    f"⚡ **Fast Finder Web - Thumbnail Warmup**\n\n"
+                    f"📁 **Current Collection:** `{col_name.upper()}`\n"
+                    f"📊 **Progress Status:** `{processed_count}/{total_to_process}` Files\n"
+                    f"✨ **Successfully Locked:** `{success_count}` Thumbs\n"
+                    f"⏳ **Estimated Time Remaining:** `{get_readable_time(eta_seconds)}`\n\n"
                     f"`{p_bar}`\n\n"
-                    f"ℹ️ <i>Live status stream logs are running on Koyeb Console!</i>"
+                    f"ℹ️ _Logs are streaming live on Koyeb Console!_"
                 )
-                try: await status_msg.edit(status_text)
-                except: pass
+                try: 
+                    await status_msg.edit(status_text)
+                except: 
+                    pass
                 
-                # ✅ FIX: रैम लीक्स और इन-मेमोरी बफर्स को क्लियर रखने के लिए पीरियोडिक गार्बेज कलेक्शन
+                # कोएब कंटेनर रैम फ्लश बूस्टर
                 gc.collect()
 
-    # फाइनल कंप्लीशन रिपोर्ट समरी
+    # फाइनल कंप्लीशन रिपोर्ट
     final_report = (
-        f"🎉 <b>Thumbnail Warmup Finished Successfully!</b>\n\n"
-        f"🎯 <b>Total Processed:</b> `{processed_count}` Library Documents\n"
-        f"🔒 <b>Cached & Synced in DB:</b> `{success_count}` Live Poster IDs\n\n"
-        f"⚡ <i>Web application, Mini App & Bot posters will render instantly now without lag!</i>"
+        f"🎉 **Thumbnail Warmup Finished Successfully!**\n\n"
+        f"🎯 **Total Processed:** `{processed_count}` Documents\n"
+        f"🔒 **Locked & Cached in DB:** `{success_count}` Images\n\n"
+        f"⚡ Web application search and thumbs will render instantly now!"
     )
-    logger.info("🎉 [WARMUP] Thumbnail warmup lifecycle accomplishes smoothly.")
+    logger.info("🎉 [WARMUP] Thumbnail warmup operation accomplished successfully.")
     try: await status_msg.reply(final_report)
     except: pass
 
@@ -156,7 +171,7 @@ async def start_warmup_engine(client, status_msg, user_id):
 # ─────────────────────────────────────────────────────────
 @Client.on_message(filters.command("warmup_thumbs") & filters.user(ADMINS))
 async def warmup_thumbs_cmd(client, message):
-    status_msg = await message.reply("⚙️ <b>Thumbnail Warmup Process Starting...</b>\nFetching document counts from DB...")
+    status_msg = await message.reply("⚙️ **Thumbnail Warmup Process Starting...**\nFetching document counts from DB...")
     await start_warmup_engine(client, status_msg, message.from_user.id)
 
 
@@ -165,12 +180,13 @@ async def warmup_thumbs_cmd(client, message):
 # ─────────────────────────────────────────────────────────
 @Client.on_callback_query(filters.regex(r"^warmup_trigger_all$"))
 async def warmup_callback_handler(client, query):
-    # स्ट्रिक्ट एडमिन गेटवे सुरक्षा ताला
     if query.from_user.id not in ADMINS:
         return await query.answer("❌ Verification Access Denied! Only Bot Admins can trigger warmup.", show_alert=True)
     
     await query.answer("⚙️ Thumbnail Warmup Initiated! Starting Background Pipeline...", show_alert=False)
     
-    # उसी स्टैट्स वाले मैसेज का टेक्स्ट बदलकर सीधे वार्मअप प्रोग्रेस स्क्रीन में कन्वर्ट कर दें
-    await query.message.edit_reply_markup(reply_markup=None) # फालतू बटन्स तुरंत साफ करें
+    # स्टैट्स वाले मैसेज के फालतू बटन्स तुरंत साफ करके उसे प्रोग्रेस बार स्क्रीन में बदलें
+    try: await query.message.edit_reply_markup(reply_markup=None)
+    except: pass
+    
     await start_warmup_engine(client, query.message, query.from_user.id)
