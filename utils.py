@@ -2,18 +2,19 @@ import logging
 import asyncio
 import re
 import time
+import gc
+import pytz
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 from hydrogram.errors import FloodWait
 from hydrogram import enums
 
-from info import ADMINS, IS_PREMIUM, LOG_CHANNEL
+from info import ADMINS, IS_PREMIUM, TIME_ZONE
 from database.users_chats_db import db
 
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
-# 🧠 TEMP RUNTIME STORAGE
+# 🧠 TEMP RUNTIME STORAGE (Central context bucket)
 # ─────────────────────────────────────────────
 class temp(object):
     START_TIME = 0
@@ -23,21 +24,23 @@ class temp(object):
     ADMIN_TOKENS, ADMIN_SESSIONS, FILES, PM_FILES = {}, {}, {}, {}
 
 # ─────────────────────────────────────────────
-# 🛡️ RATE LIMITER UTILITY (Memory Leak Fixed)
+# 🛡️ RATE LIMITER UTILITY (Aggressive RAM Flush Sync)
 # ─────────────────────────────────────────────
 _rate_limits = {}
 
 def is_rate_limited(user_id, action, seconds):
-    """हैवी कमांड्स पर स्पैम रोकता है और रैम लीक से सुरक्षित रखता है।"""
+    """हैवी प्रीमियम कमांड्स पर स्पैम रोकता है और रैम को फ़ोर्स फ्लश करता है।"""
     key = f"{user_id}:{action}"
     now = time.time()
     
-    # स्मार्ट पीरियोडिक क्लीनअप (Koyeb RAM Safe)
-    if len(_rate_limits) > 500:
+    # स्मार्ट पीरियोдिक क्लीनअप (Koyeb RAM Safe Protection)
+    if len(_rate_limits) > 300: # रैम लीक गार्ड थ्रेशोल्ड लिमिट 300 पर लॉक
         cutoff = now - 60 
         expired_keys = [k for k, v in _rate_limits.items() if v < cutoff]
         for k in expired_keys:
             _rate_limits.pop(k, None)
+        # ✅ FIX: अन-रेफ़रेंस्ड ऑब्जेक्ट्स को कोएब की रैम से तुरंत साफ़ करने के लिए गारबेज कलेक्शन
+        gc.collect()
             
     if key in _rate_limits and now - _rate_limits[key] < seconds:
         return True
@@ -46,7 +49,7 @@ def is_rate_limited(user_id, action, seconds):
     return False
 
 # ─────────────────────────────────────────────
-# 👮 ADMIN CHECK
+# 👮 BOT CHAT ADMIN LOOKUP GUARD
 # ─────────────────────────────────────────────
 async def is_check_admin(bot, chat_id, user_id):
     try:
@@ -58,9 +61,10 @@ async def is_check_admin(bot, chat_id, user_id):
         return False
 
 # ─────────────────────────────────────────────
-# 💎 PREMIUM SYSTEM (Timezone Synchronized)
+# 💎 PREMIUM AUTO-VALIDATOR (Perfect info.py TIME_ZONE Sync)
 # ─────────────────────────────────────────────
 async def is_premium(user_id, bot=None):
+    # एडमिन को हमेशा लाइफटाइम बाईपास अनलॉक रहेगा
     if not IS_PREMIUM or user_id in ADMINS: 
         return True
         
@@ -76,18 +80,20 @@ async def is_premium(user_id, bot=None):
             except: 
                 expire = None
         
-        # सर्वरलेस आर्किटेक्चर और डेटाबेस सिंकिंग के लिए टाइमज़ोन मुक्त शुद्ध लोकल कॉम्पैरिजन
-        now_ist = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
-        if not expire or expire < now_ist:
+        # ✅ FIX: हार्डकोडिंग हटाकर 'info.py' के कस्टमाइज्ड 'TIME_ZONE' से शुद्ध सिंक कॉम्पैरिजन
+        local_tz = pytz.timezone(TIME_ZONE)
+        now_local = datetime.now(local_tz).replace(tzinfo=None)
+        
+        if not expire or expire < now_local:
             if bot:
                 try: 
-                    await bot.send_message(user_id, f"❌ Your premium {mp.get('plan')} plan has expired.\n\nUse /plan to renew.")
+                    await bot.send_message(user_id, f"❌ <b>Your Premium Membership Plan has Expired!</b>\n\nContact Admin or use /plan to activate again.")
                 except: 
                     pass
             
-            # प्रीमियम खत्म होने पर सारे रिमाइंडर फ्लैग्स और डेटा को रीसेट करें
+            # प्रीमियम ख़त्म होते ही डेटाबेस में सारे रिमाइंडर फ़्लैग्स और स्टेटस को तुरंत रिफ्रेश/रीसेट करें
             await db.update_plan(user_id, {
-                "expire": "", 
+                "expire": None, 
                 "plan": "", 
                 "premium": False,
                 "reminded_12h": False, 
@@ -101,40 +107,11 @@ async def is_premium(user_id, bot=None):
             return False
     return True
 
-# ─────────────────────────────────────────────
-# 📢 BROADCAST UTILITY
-# ─────────────────────────────────────────────
-async def broadcast_messages(chat_id, message, pin=False, is_group=False):
-    try:
-        msg = await message.copy(chat_id=chat_id)
-        if pin:
-            try: 
-                await msg.pin(both_sides=not is_group)
-            except: 
-                pass
-        return "Success"
-    except FloodWait as e:
-        await asyncio.sleep(e.value)
-        return await broadcast_messages(chat_id, message, pin, is_group)
-    except Exception:
-        # कतार लोड को नियंत्रित रखते हुए मोंगोडीबी पर केवल आवश्यक एरर फ्लैग्स अपडेट करना
-        if is_group:
-            try:
-                await db.groups.update_one(
-                    {"id": int(chat_id)},
-                    {"$set": {"chat_status": {"is_disabled": True, "reason": "Bot removed from group"}}}
-                )
-            except: 
-                pass
-        else:
-            try:
-                await db.delete_user(int(chat_id))
-            except:
-                pass
-        return "Error"
+# ❌ FIX: 'broadcast_messages' (पुराना भारी ब्रॉडकास्ट इंजन कबाड़) पूरी तरह डिलीटेड। 
+# इससे नो-रिपिटिशन रूल और क्लीन आर्किटेक्चर लागू होता है।
 
 # ─────────────────────────────────────────────
-# ⚙️ TTL CACHE FOR SETTINGS (High Performance)
+# ⚙️ TTL SETTINGS CACHE (Bounded Memory Leak Proof)
 # ─────────────────────────────────────────────
 _settings_cache = {}
 _CACHE_TTL = 300 
@@ -145,8 +122,14 @@ async def get_settings(group_id):
         data, ts = _settings_cache[group_id]
         if now - ts < _CACHE_TTL:
             return data
-    
+            
     data = await db.get_settings(group_id)
+    
+    # ✅ FIX: इन-मेमोरी डिक्शनरी को अनकैप्ड बढ़ने से रोकने के लिए बाउंडेड कैशे गार्ड
+    if len(_settings_cache) > 200:
+        _settings_cache.clear()
+        gc.collect()
+        
     _settings_cache[group_id] = (data, now)
     return data
 
@@ -157,7 +140,7 @@ async def save_group_settings(group_id, key, value):
     await db.update_settings(group_id, data)
 
 # ─────────────────────────────────────────────
-# 📦 UTILS (Formatting & Time)
+# 📦 FORMATTING & RAIN TIME UTILS
 # ─────────────────────────────────────────────
 def get_size(size):
     units = ["Bytes", "KB", "MB", "GB", "TB"]
@@ -171,12 +154,14 @@ def get_readable_time(seconds):
     for name, sec in periods:
         if seconds >= sec:
             val, seconds = divmod(seconds, sec)
-            res += f"{int(val)}{name}"
-    return res or "0s"
+            res += f"{int(val)}{name} "
+    return res.strip() or "0s"
 
 def get_wish():
-    h = datetime.now(ZoneInfo("Asia/Kolkata")).hour
-    return "ɢᴏᴏᴅ ᴍᴏʀɴɪɴɢ 🌞" if h < 12 else "ɢᴏᴏᴅ ᴀꜰᴛᴇʀɴᴏᴏ afternoon 🌗" if h < 18 else "ɢᴏᴏᴅ ᴇᴠᴇɴɪɴɢ 🌘"
+    # ✅ FIX: कचरा टेक्स्ट और अशुद्धियों को हटाकर कस्टमाइज्ड टाइमज़ोन विश इंजन सिंक किया गया
+    tz = pytz.timezone(TIME_ZONE)
+    h = datetime.now(tz).hour
+    return "ɢᴏᴏᴅ ᴍᴏʀɴɪɴɢ 🌞" if h < 12 else "ɢᴏᴏᴅ ᴀꜰᴛᴇʀɴᴏᴏɴ 🌗" if h < 18 else "ɢᴏᴏᴅ ᴇᴠᴇɴɪɴɢ 🌘"
 
 async def get_seconds(time_string):
     match = re.match(r"(\d+)(s|min|hour|day|month|year)", time_string)
@@ -187,7 +172,7 @@ async def get_seconds(time_string):
         "month": 2592000, "year": 31536000
     }.get(match.group(2), 0)
 
-# 🛠️ Helpers for premium and cleanup
+# 🛠️ PREMIUM LIFECYCLE TIME PARSERS
 def parse_expire_time(e):
     if isinstance(e, datetime): 
         return e
@@ -197,6 +182,7 @@ def parse_expire_time(e):
         return None
 
 def get_ist_str(dt):
+    # ग्लोबल रिफॉर्मेटेड पठनीय स्ट्रिंग रिपॉजिटरी रेंडरर
     return (dt + timedelta(hours=5, minutes=30)).strftime("%d %B %Y, %I:%M %p") if dt else "Unknown"
 
 async def safe_del(c, cid, mids):
