@@ -15,18 +15,19 @@ class script(object):
 
 ✨ <i>ᴊᴏɪɴ ᴏᴜʀ ᴘʀᴇᴍɪᴜᴍ ꜰᴏʀ ᴀɴ ᴀᴅ-ꜰʀᴇᴇ ᴇxᴘᴇʀɪᴇɴᴄᴇ!</i></b>"""
 
-    # ✅ FIX: एडमिन स्टैट्स में फाइलों के साथ-साथ किस स्टोरेज में कितने थंबनेल लॉक हैं, उसका लाइव मैट्रिक्स सिंक
-    STATUS_TXT = """📊 <b><u>FAST FINDER SYSTEM STATS</u></b>
+    # 📊 ✅ FIXED: आपके स्क्रीनशॉट के अनुसार बिल्कुल हूबहू पर्पल नियॉन थीम आधारित स्टैट्स लेआउट
+    STATUS_TXT = """📊 <b><i>FAST FINDER SYSTEM STATS</i></b>
 
-🦹 <b>Total Users:</b> <code>{}</code>
-👫 <b>Connected Groups:</b> <code>{}</code>
+🤵 <b>Total Users:</b> <code>{}</code>
+👥 <b>Connected Groups:</b> <code>{}</code>
 💎 <b>Premium Members:</b> <code>{}</code>
 
-🗂️ <b>Database Library:</b>
-» Total Titles Locked: <code>{}</code>
-» Primary Storage: <code>{}</code> (🖼️ Thumbs: <code>{}</code>)
-» Cloud Library: <code>{}</code>    (🖼️ Thumbs: <code>{}</code>)
-» Archive Backup: <code>{}</code>   (🖼️ Thumbs: <code>{}</code>)
+🌐 <b><i>Data Centre</i></b>
+📁 <b>Total Files:</b> <code>{}</code>
+
+⚡ <b>Primary :</b> <code>{}</code> ✅ <code>{}</code>
+☁️ <b>Cloud :</b> <code>{}</code> ✅ <code>{}</code>
+♻️ <b>Archive :</b> <code>{}</code> ✅ <code>{}</code>
 
 🖼️ <b>Total Cached Thumbs:</b> <code>{}</code>
 ⏰ <b>System Live Uptime:</b> <code>{}</code>"""
@@ -91,7 +92,7 @@ Please check the commands below 👇</b>"""
 • /dlink | /removedlink - Manage timed auto-delete words
 • /dlinklist - View persistent auto-delete triggers</b>"""
     
-    # ✅ प्रीमियम प्लान की डिटेल्स (Price / Per Day fixed)
+    # ✅ प्रीमियम案 की डिटेल्स (Price / Per Day fixed)
     PLAN_TXT = """💎 <b>Fast Finder Premium Plans</b> 💎
 
 Activate a premium plan to unlock exclusive, high-speed features!
