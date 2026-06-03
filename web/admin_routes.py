@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 admin_routes = web.RouteTableDef()
 
+# रजिस्ट्रेशन Verification OTP कैशे बकेट इनिशियलाइजेशन
 if not hasattr(temp, 'REG_PENDING'):
     temp.REG_PENDING = {}
 
@@ -96,8 +97,7 @@ async function doSearch(o){
             
             var adminControls='';
             if(d.is_admin){
-                // ✅ FIXED: यूज़र के कड़े निर्देशानुसार फालतू '🔄' रीलोड बटन को लेआउट ग्रिड से पूरी तरह साफ कर दिया गया है
-                adminControls='<div style="display:flex;gap:8px;margin-top:8px;">' +
+                adminControls='<div style="display:flex;gap:4px;margin-top:8px;">' +
                     '<button onclick="editFile(\\'' + f.file_id + '\\',\\'' + f.raw_collection + '\\',\\'' + f.name.replace(/'/g,"\\\\'") + '\\')" style="flex:1;background:#444;color:#fff;border:0;padding:10px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:bold;">Edit</button>' +
                     '<div style="flex:1;background:var(--accent);color:#fff;border:0;padding:10px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:bold;text-align:center;" onclick="deleteFile(\\'' + f.file_id + '\\',\\'' + f.raw_collection + '\\')">Delete</div>' +
                 '</div>';
@@ -162,7 +162,7 @@ function editFile(fid, col, currentName) {
     document.getElementById('cropContainer').style.display = 'none';
     var prevBox = document.getElementById('emPreviewBox');
     prevBox.style.display = 'flex';
-    prevBox.innerHTML = '<img src="/api/thumb?file_id=' + fid + '" class="t-prev-img" onerror="this.src=\\'https://placehold.co/600x338/181818/FFF?text=No+Thumbnail\';">';
+    prevBox.innerHTML = '<img src="/api/thumb?file_id=' + fid + '" class="t-prev-img" onerror="this.src=\\'https://placehold.co/600x338/181818/FFF?text=No+Thumbnail\\';">';
     document.getElementById('editCombinedModal').classList.add('open');
 }
 
@@ -236,7 +236,6 @@ async function saveAllChanges() {
         if(res.success || cropperInstance) {
             showToast('✨ Metadata & Studio Poster saved successfully!');
             closeCombinedModal();
-            // बैकएंड साल्ट के कारण यह बैकग्राउंड में बिना पेज हिले थंबनेल चमका देगा
             reloadThumb(activeFid);
             doSearch(curOff);
         } else {
@@ -267,7 +266,7 @@ def build_page(title, body, cls="", active_tab="", role=None):
     else: nav_links = ""
 
     if role: nav = f'<div class="sidebar-overlay" id="sbOverlay" onclick="closeSidebar()"></div><div class="sidebar" id="sidebar"><div class="sb-header"><div class="sb-logo"><span class="nf-icon">F</span> FAST FINDER</div><button class="sb-close" onclick="closeSidebar()">&#10005;</button></div><nav class="sb-nav"><div class="sb-section">Menu</div>{nav_links}</nav><div class="sb-footer"><a href="/logout" class="sb-logout">Sign Out</a></div></div><div class="topbar"><button class="ham-btn" id="hamBtn" onclick="openSidebar()"><span class="ham-line"></span><span class="ham-line"></span><span class="ham-line"></span></button><a class="logo" href="/dashboard"><span class="nf-icon">F</span> FAST FINDER</a><div class="topbar-right"><button class="theme-btn" onclick="toggleThemeFixed()">Theme</button></div></div>'
-    else: nav = ""
+    else: nav = '<div class="topbar" style="position:absolute; width:100%; box-shadow:none; background:transparent;"><a class="logo" href="/" style="font-size:24px"><span class="nf-icon" style="font-size:24px">F</span> FAST FINDER</a><div class="topbar-right"><button class="theme-btn" onclick="toggleThemeFixed()">Theme</button></div></div>'
 
     modals = """
     <div class="edit-modal" id="editCombinedModal" onclick="if(event.target===this)closeCombinedModal()">
@@ -356,9 +355,9 @@ async def api_register_step1(req):
 
 @admin_routes.get('/verify_registration')
 async def verify_registration_page(req):
-    text_val = req.query.get('tg_id', '')
-    if not text_val: return web.HTTPFound('/register')
-    content = f'<p style="color:var(--muted); margin-bottom:15px; font-size:14px;">We sent a 6-digit OTP to your Telegram bot PM.</p><form action="/api/register_step2" method="post"><input type="hidden" name="tg_id" value="{text_val}"><input type="text" name="otp" placeholder="Enter 6-digit OTP" required><button class="submit-btn" type="submit">Verify & Create Account</button></form>'
+    tg_id = req.query.get('tg_id', '')
+    if not tg_id: return web.HTTPFound('/register')
+    content = f'<p style="color:var(--muted); margin-bottom:15px; font-size:14px;">We sent a 6-digit OTP to your Telegram bot PM.</p><form action="/api/register_step2" method="post"><input type="hidden" name="tg_id" value="{tg_id}"><input type="text" name="otp" placeholder="Enter 6-digit OTP" required><button class="submit-btn" type="submit">Verify & Create Account</button></form>'
     return build_page("Verify Registration", form_wrapper("Verify OTP", content, req.query.get('err','')), "login-bg")
 
 @admin_routes.post('/api/register_step2')
@@ -405,53 +404,6 @@ async def api_reset_password(req):
     except: return web.HTTPFound('/forgot_password?err=Invalid Input')
     if await web_db.verify_otp_and_reset(tg_id, d.get('otp'), d.get('new_password')): return web.HTTPFound('/login?msg=Password updated successfully! Please login.')
     return web.HTTPFound('/forgot_password?err=Invalid or Expired OTP.')
-
-@admin_routes.get('/profile')
-async def profile_page(req):
-    role, tg_id = await get_auth(req)
-    if not role: return web.HTTPFound('/login')
-    user = await web_db.col.find_one({"tg_id": tg_id}, {"email": 1})
-    email = user.get('email', '') if user else ''
-    err, msg = req.query.get('err',''), req.query.get('msg','')
-    mp = await user_db.get_plan(tg_id)
-    if role == 'admin': status_text, exp_text, status_color = "👑 Admin (Lifetime Access)", "Never (Lifetime)", "#e50914" 
-    else: status_text, exp_text, status_color = "💎 Premium User", mp.get('expire', 'Unknown'), "#3399ff" 
-    
-    b = f'''<div class="main" style="padding-top:40px; max-width:700px;"><div class="scard">{f'<div class="err-box">{err}</div>' if err else ""}{f'<div class="success-box">{msg}</div>' if msg else ""}<h2 style="margin-bottom:25px;">Account Settings</h2><div style="background:var(--bg3); padding:15px; border-radius:4px; margin-bottom:25px; border-left:4px solid {status_color};"><div style="font-size:12px; color:var(--muted); margin-bottom:5px;">Account Status</div><div style="font-size:18px; font-weight:700; color:{status_color}; margin-bottom:10px;">{status_text}</div><div style="font-size:12px; color:var(--muted); margin-bottom:2px;">Premium Expires:</div><div style="font-size:15px; font-weight:500;">{exp_text}</div></div><form action="/api/update_profile" method="post"><div class="scard-label">Telegram ID (Non-changeable)</div><input type="text" value="{tg_id}" class="search-input" style="margin-bottom:20px; opacity:0.6" disabled><div class="scard-label">Email Address</div><input type="email" name="new_email" value="{email}" class="search-input" style="margin-bottom:20px;" required><div class="scard-label">New Password (Leave blank to keep current)</div><input type="password" name="new_pass" placeholder="Enter New Password" class="search-input" style="margin-bottom:30px;"><button class="search-btn" style="width:100%" type="submit">Save Changes</button></form></div></div>'''
-    return build_page("Profile - Fast Finder", b, "", "profile", role)
-
-@admin_routes.post('/api/update_profile')
-async def api_update_profile(req):
-    role, tg_id = await get_auth(req)
-    if not role: return web.HTTPFound('/login')
-    
-    d = await req.post()
-    new_email = d.get('new_email', '').strip()
-    new_pass = d.get('new_pass', '').strip()
-    
-    if not new_email:
-        return web.HTTPFound('/profile?err=Email cannot be empty!')
-        
-    existing = await web_db.col.find_one({"email": new_email, "tg_id": {"$ne": tg_id}}, {"_id": 1})
-    if existing:
-        return web.HTTPFound('/profile?err=This email is already in use by another account!')
-
-    update_data = {"email": new_email}
-    if new_pass:
-        update_data["password"] = hash_password(new_pass)
-
-    try:
-        await web_db.col.update_one({"tg_id": tg_id}, {"$set": update_data})
-        return web.HTTPFound('/profile?msg=Profile updated successfully!')
-    except Exception as e:
-        return web.HTTPFound(f'/profile?err=Update failed: {str(e)}')
-
-@admin_routes.get('/premium_expired')
-async def premium_expired(req):
-    role, tg_id = await get_auth(req)
-    if not role: return web.HTTPFound('/login')
-    content = f'<div style="text-align:center;"><div style="font-size:50px; margin-bottom:15px;">⏳</div><p style="color:var(--muted); margin-bottom:30px;">Your access to Fast Finder Web has expired. Please renew your plan via our Telegram Bot.</p><div class="scard red" style="text-align:left; margin-bottom:25px; padding:15px;"><div class="scard-label">How to Renew?</div><div class="scard-sub" style="color:var(--text)">1. Go to Telegram Bot</div><div class="scard-sub" style="color:var(--text)">2. Use command <b>/plan</b></div><div class="scard-sub" style="color:var(--text)">3. Pay & Activate instantly</div></div><a href="https://t.me/{temp.U_NAME}" class="submit-btn" style="text-decoration:none; display:block;">Open Telegram Bot</a><a href="/logout" style="display:block; margin-top:20px; color:var(--muted); text-decoration:none;">Sign Out</a></div>'
-    return build_page("Premium Expired", form_wrapper("Premium Expired", content), "login-bg")
 
 @admin_routes.get('/stats')
 async def stats(req):
@@ -541,6 +493,13 @@ async def stats(req):
     '</div>'
 
     return build_page("Stats - Fast Finder", html_stats_body, "", "stats", role)
+
+@admin_routes.get('/dashboard')
+async def dash(req):
+    role, tg_id = await get_auth(req)
+    if not role: return web.HTTPFound('/login')
+    b = '<div class="search-zone"><div class="search-row"><div class="filter-tabs"><button class="ftab active" data-col="all" onclick="setCol(this)">All</button><button class="ftab" data-col="primary" onclick="setCol(this)">Primary</button><button class="ftab" data-col="cloud" onclick="setCol(this)">Cloud</button><button class="ftab" data-col="archive" onclick="setCol(this)">Archive</button></div><select id="posterMode" onchange="changePosterMode()" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:8px;font-weight:700;outline:none;cursor:pointer;"><option value="tg">📸 Original TG Thumb</option><option value="none">⚡ Text Only (Fastest)</option></select><div class="search-wrap"><span class="s-icon">&#9906;</span><input class="search-input" id="q" placeholder="Titles, people, genres"></div><button class="search-btn" onclick="doSearch(0)">Search</button></div></div><div class="main" style="padding-top:20px;"><div class="results-info" id="resInfo"><span class="results-count" id="resCount"></span></div><div id="results" class="res-grid"><div class="empty"><div class="empty-icon">&#8981;</div><p>Find your favorite movies and TV shows.</p></div></div><div class="pagination" id="pageBox"><button class="pg-btn" id="pBtn" onclick="prev()" disabled>Previous</button><span class="pg-info" id="pgInfo">Page 1</span><button class="pg-btn" id="nBtn" onclick="next()">Next</button></div></div><div class="toast" id="toast"></div>'
+    return build_page("Home - Fast Finder", b, "", "dash", role)
 
 @admin_routes.get('/logout')
 async def logout(req):
