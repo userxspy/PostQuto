@@ -41,13 +41,12 @@ COLLECTIONS = {
 async def ensure_indexes():
     for name, col in COLLECTIONS.items():
         try:
-            # ✅ FIX: कम्पाउंड टेक्स्ट इंडेक्स को सुरक्षित रखा गया
+            # ✅ कम्पाउंड टेक्स्ट इंडेक्स को सुरक्षित रखा गया
             await col.create_index(
                 [("file_name", "text"), ("caption", "text")],
                 name=f"{name}_text"
             )
-            # ✅ FIX: अवैध _id: -1 इंडेक्स को हमेशा के लिए हटा दिया गया है
-            # इससे मोंगोडीबी की तीनों Index warning [BadValue] पूरी तरह से फिक्स हो जाएंगी।
+            # ✅ अवैध _id: -1 इंडेक्स को हमेशा के लिए हटा दिया गया है
             logger.info(f"✅ Fast Search Index OK: {name}")
         except Exception as e:
             if "already exists" in str(e) or "IndexKeySpecsConflict" in str(e):
@@ -112,12 +111,12 @@ async def save_file(media, collection_type="primary"):
         doc = {
             "_id":       file_id,     
             "file_id":   file_id,     
-            "file_ref":  media.file_id, 
+            "file_ref":  media.file_id,
             "file_name": f_name,
             "file_size": media.file_size,
             "caption":   caption,
             "file_type": file_type,   
-            "thumb_url": thumb_url  
+            "thumb_url": thumb_url 
         }
 
         await col.replace_one({"_id": file_id}, doc, upsert=True)
@@ -158,7 +157,8 @@ async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None
     count = await col.count_documents(text_flt)
     
     if count > 0:
-        cursor = col.find(text_flt, {"_id": 1, "file_name": 1, "file_size": 1, "caption": 1, "score": {"$meta": "textScore"}})
+        # ✅ UPGRADE: प्रोजेक्शन इंजन में "thumb_url" को सिंक किया गया ताकि फ़्रंटएंड इमेज कैशे बस्टर तेज़ी से लोड हो
+        cursor = col.find(text_flt, {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "caption": 1, "thumb_url": 1, "score": {"$meta": "textScore"}})
         cursor.sort([("score", {"$meta": "textScore"})])
         cursor.skip(offset).limit(limit)
         docs = await cursor.to_list(length=limit)
@@ -174,8 +174,8 @@ async def _search(col, raw_query: str, regex, offset: int, limit: int, lang=None
     if lang:
         reg_flt = {"$and": [reg_flt, {"file_name": re.compile(lang, re.IGNORECASE)}]}
 
-    # ✅ FIX: इंडेक्सिंग एरर हटने के बाद डिफ़ॉल्ट _id सॉर्टिंग को बिना -1 इंडेक्स स्पेसिफिकेशन के सेफ एलाइन किया गया
-    cursor = col.find(reg_flt, {"_id": 1, "file_name": 1, "file_size": 1, "caption": 1}).sort('_id', -1)
+    # ✅ UPGRADE: यहाँ भी प्रोजेक्शन में "thumb_url" और "file_type" को प्रोजेक्ट किया गया है ताकि सर्च रिज़ल्ट्स रॉकेट स्पीड से काम करें
+    cursor = col.find(reg_flt, {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "caption": 1, "thumb_url": 1}).sort('_id', -1)
     cursor.skip(offset).limit(limit)
     docs = await cursor.to_list(length=limit)
     for doc in docs:
