@@ -76,7 +76,7 @@ class WebAuthDB:
 # =========================================
 class Database:
     def __init__(self):
-        # ✅ MOTOR ENGINE: कोएब आइडल थ्रॉटलिंग और कनेक्शन ड्रॉप से सुरक्षित ट्यूनिंग
+        # ✅ MOTOR ENGINE: कोएब आइडल थ्रॉटलिंग और कनेक्शन DROP से सुरक्षित ट्यूनिंग
         self.client = AsyncIOMotorClient(
             DATABASE_URL, 
             minPoolSize=0,            # आइडल टाइम पर 0 कनेक्शन (RAM 100% सेफ)
@@ -98,6 +98,13 @@ class Database:
             except Exception as e: 
                 logger.warning(f"Index warn: {e}")
         
+        # ✅ FIX: अगर डेटाबेस कतार में पुरानी 'id_1' अवैध इंडेक्स मौजूद है, तो उसे पूरी तरह से डिस्ट्रॉय करो
+        try:
+            await self.delete_queue.drop_index("id_1")
+            logger.info("🗑️ Old defective unique index 'id_1' dropped from AutoDeleteQueue.")
+        except Exception:
+            pass # अगर पहले से मौजूद नहीं है तो सेफ बाईपास
+
         # ऑटो-डिलीट कतार के लिए इंडेक्स सिंक
         try:
             await self.delete_queue.create_index([("delete_at", 1)])
@@ -210,10 +217,24 @@ class Database:
 
     # ───────────────── ⏳ PERSISTENT AUTO-DELETE QUEUE ENGINE ─────────────────
     async def add_to_delete_queue(self, chat_id, message_id, delay_seconds):
+        if not chat_id or not message_id:
+            return False # कचरा एंट्री वैलिडेटर गेटवे लॉक
+            
         delete_at = get_local_now() + timedelta(seconds=delay_seconds) # ग्लोबल टाइमज़ोन सिंक
+        
+        # ✅ FIX: चैट आईडी और मैसेज आईडी का एकदम यूनिक कॉम्बो स्ट्रिंग बनाओ ताकि 'id: null' का लफड़ा हमेशा के लिए खत्म हो जाए!
+        task_id = f"{int(chat_id)}_{int(message_id)}"
+        
         await self.delete_queue.update_one(
-            {"chat_id": int(chat_id), "message_id": int(message_id)},
-            {"$set": {"delete_at": delete_at}},
+            {"_id": task_id},
+            {
+                "$set": {
+                    "_id": task_id,
+                    "chat_id": int(chat_id),
+                    "message_id": int(message_id),
+                    "delete_at": delete_at
+                }
+            },
             upsert=True
         )
 
@@ -222,7 +243,9 @@ class Database:
         return self.delete_queue.find({"delete_at": {"$lte": now}})
 
     async def remove_from_delete_queue(self, chat_id, message_id):
-        await self.delete_queue.delete_one({"chat_id": int(chat_id), "message_id": int(message_id)})
+        # ✅ FIX: डिलीट टास्क रिमूव करते समय भी सीधे यूनिक कॉम्बो की को टारगेट करें
+        task_id = f"{int(chat_id)}_{int(message_id)}"
+        await self.delete_queue.delete_one({"_id": task_id})
 
 # =========================================
 # 🚀 INITIALIZE DATABASES
