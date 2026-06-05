@@ -69,7 +69,7 @@ class TGCustomYield:
         ms = await self.generate_media_session(self.main_bot, msg)
         loc = await self.get_location(await self.generate_file_properties(msg))
         
-        # ✅ FIX: कोएब के इन-मेमोरी कचरे को रोकने के लिए फिक्स साइज प्री-एलोकेटेड बफर इंजन ट्यूनिंग
+        # ✅ कोएब के इन-मेमोरी कचरे को रोकने के लिए फिक्स साइज प्री-एलोकेटेड बफर इंजन ट्यूनिंग
         buffer_pool = bytearray(chunk_size)
         
         try:
@@ -85,14 +85,15 @@ class TGCustomYield:
                 buffer_pool[:chunk_len] = chunk
                 active_chunk = memoryview(buffer_pool)[:chunk_len]
                 
+                # ✅ FIX: .tobytes() का उपयोग किया ताकि डेटा ओवरराइट होने से पहले प्लेयर तक सुरक्षित डिलीवर हो जाए
                 if parts == 1: 
-                    yield active_chunk[first_cut:last_cut]
+                    yield active_chunk[first_cut:last_cut].tobytes()
                 elif i == 1: 
-                    yield active_chunk[first_cut:]
+                    yield active_chunk[first_cut:].tobytes()
                 elif i == parts: 
-                    yield active_chunk[:last_cut]
+                    yield active_chunk[:last_cut].tobytes()
                 else: 
-                    yield active_chunk
+                    yield active_chunk.tobytes()
                 
                 # डायनामिक ऑफसेट कर्सर (Seek/Skip Control Sync)
                 offset += chunk_len
@@ -118,6 +119,7 @@ class TGCustomYield:
         limit, offset = 1048576, 0 # 1MB प्रोग्रेसिव ब्लॉक डाउनलोडर
         
         bytes_io = io.BytesIO()
+        chunks_count = 0 # ✅ FIX: काउंटर बेस्ड गार्बेज कलेक्शन ट्रैकिंग
         
         try:
             while True:
@@ -126,9 +128,10 @@ class TGCustomYield:
                     break
                 bytes_io.write(r.bytes)
                 offset += len(r.bytes)
+                chunks_count += 1
                 
-                # हैवी डाउनलोड के समय बैकग्राउंड रैम को फ्री रखें
-                if offset % (limit * 10) == 0:
+                # ✅ FIX: हर 10 चंक्स (10MB) के बाद रैम को खाली करें, ऑफसेट मोड्यूलो पर निर्भर न रहें
+                if chunks_count % 10 == 0:
                     gc.collect()
                     
         except Exception as e:
