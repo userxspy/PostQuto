@@ -15,12 +15,13 @@ CARD_CSS = """
 .search-zone{padding:16px 2px 0}
 .search-row1{display:flex;align-items:stretch;gap:8px;margin-bottom:8px;min-height:44px}
 .search-row2{display:flex;align-items:center;gap:8px;margin-bottom:16px}
-.search-wrap{flex:1;min-width:0;display:flex;align-items:center;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:0 12px;gap:8px;overflow:hidden}
-.s-icon{color:var(--muted);font-size:16px;flex-shrink:0}
-.search-input{flex:1;min-width:0;width:100%;background:transparent;border:none;outline:none;color:var(--text);font-size:13px;padding:11px 0;font-family:inherit}
+.search-wrap{flex:1;min-width:0;display:flex;align-items:center;background:var(--bg2);border:2px solid var(--border);border-radius:8px;padding:0 12px;gap:8px;overflow:hidden}
+.search-input{flex:1;min-width:0;width:100%;background:transparent;border:none;outline:none;color:var(--text);caret-color:var(--accent);font-size:15px;font-weight:600;padding:11px 0;font-family:inherit}
+.search-input::placeholder{color:var(--muted);font-weight:400}
+@media(prefers-color-scheme:dark){.search-input{color:#fff}}
 .search-btn{flex-shrink:0;background:linear-gradient(135deg,var(--accent),var(--accent-hover));color:#fff;border:none;border-radius:8px;padding:0 22px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 4px 14px rgba(229,9,20,0.35);align-self:stretch}
 .search-btn:hover{opacity:0.92}
-.filter-select{background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:9px 10px;font-size:12px;font-weight:700;outline:none;cursor:pointer;font-family:inherit}
+.filter-select{flex:1;min-width:0;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:9px 6px;font-size:12px;font-weight:700;outline:none;cursor:pointer;font-family:inherit;box-sizing:border-box}
 
 /* ── Results grid ── */
 .res-grid{display:grid;grid-template-columns:1fr;gap:4px;margin-bottom:24px}
@@ -292,7 +293,7 @@ async function saveAllChanges(){
 SEARCH_ZONE = (
     '<div class="search-zone">'
         '<div class="search-row1">'
-            '<div class="search-wrap"><span class="s-icon">&#9906;</span>'
+            '<div class="search-wrap">'
             '<input class="search-input" id="q" placeholder="Titles, people, genres\u2026"></div>'
             '<button class="search-btn" onclick="doSearch(0)">Search</button>'
         '</div>'
