@@ -34,8 +34,8 @@ CARD_CSS = """
 .search-btn:hover{opacity:0.92}
 
 /* ── Custom dropdown ── */
-.cdd-wrap{flex:1;min-width:0;position:relative;user-select:none}
-.cdd-btn{width:100%;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:7px;padding:9px 28px 9px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;box-sizing:border-box;display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:border-color .15s}
+.cdd-wrap{flex:0 1 auto;min-width:0;position:relative;user-select:none}
+.cdd-btn{width:auto;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:7px;padding:7px 26px 7px 9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;box-sizing:border-box;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:border-color .15s}
 .cdd-btn:hover,.cdd-btn.open{border-color:var(--accent)}
 .cdd-arrow{position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;font-size:9px;color:var(--muted);transition:transform .2s}
 .cdd-btn.open+.cdd-arrow{transform:translateY(-50%) rotate(180deg)}
@@ -101,7 +101,7 @@ CARD_CSS = """
 
 /* ── Pagination ── */
 .pagination{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px}
-.pg-btn{background:var(--bg4);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s}
+.pg-btn{background:var(--bg4);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 0;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s;min-width:100px;text-align:center}
 .pg-btn:disabled{background:var(--bg3);color:var(--muted);cursor:not-allowed}
 .pg-btn:not(:disabled):hover{background:var(--bg3)}
 .pg-info{color:var(--muted);font-size:12px;font-weight:600}
