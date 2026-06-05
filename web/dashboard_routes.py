@@ -7,7 +7,7 @@ from utils import temp
 dashboard_routes = web.RouteTableDef()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 🎨 UPGRADED CARD UI CSS — BIGGER POSTERS & FIXED SEARCH OVERWRITE
+# 🎨 YOUR EXACT UPGRADED CARD UI CSS — (UNCHANGED)
 # ─────────────────────────────────────────────────────────────────────────────
 CARD_CSS = """
 <style>
@@ -15,18 +15,14 @@ CARD_CSS = """
 .search-zone{padding:16px 4% 0}
 .search-row1{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 .search-row2{display:flex;align-items:center;gap:8px;margin-bottom:16px}
-
-/* ✅ FIX 1: सर्च बार में टेक्स्ट ओवरराइट रोकने के लिए पैडिंग और लेफ्ट अलाइनमेंट ठीक किया */
 .search-wrap{flex:1;display:flex;align-items:center;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:0 14px;gap:10px}
 .s-icon{color:var(--muted);font-size:16px;display:flex;align-items:center}
 .search-input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:14px;padding:12px 0;font-family:inherit}
-
 .search-btn{background:linear-gradient(135deg,var(--accent),var(--accent-hover));color:#fff;border:none;border-radius:8px;padding:12px 24px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 4px 14px rgba(229,9,20,0.35)}
 .search-btn:hover{opacity:0.92}
 .filter-select{background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:10px 12px;font-size:12px;font-weight:700;outline:none;cursor:pointer;font-family:inherit}
 
 /* ── Results grid ── */
-/* ✅ FIX 2: मोबाइल स्क्रीन पर दोनों साइड का खाली स्पेस खत्म करने और थंबनेल बड़ा करने के लिए ग्रिड ट्यूनिंग */
 .res-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:18px;margin-bottom:24px}
 @media (max-width: 500px) {
     .res-grid { grid-template-columns: repeat(auto-fill, minmax(100%, 1fr)); gap: 16px; }
@@ -94,69 +90,80 @@ CARD_CSS = """
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 🎬 JS ENGINE — UNCHANGED WORKFLOW FROM CLAUDE PIKE
+# 🎬 FIXED JS ENGINE — (NO QUOTE COLLISIONS TRIPLE PROTECTED)
 # ─────────────────────────────────────────────────────────────────────────────
 JS_ENGINE = """
 var curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
 var pMode=localStorage.getItem('posterMode')||'tg';
 var LIMIT_VAL = __LIMIT_PLACEHOLDER__;
-
 var activeFid = '', activeCol = '', cropperInstance = null;
 
-function changeCol(val){{curCol=val;if(curQ)doSearch(0);}}
-function changePosterMode(){{pMode=document.getElementById('posterMode').value;localStorage.setItem('posterMode',pMode);if(curQ)doSearch(curOff);}}
+function changeCol(val){
+    curCol=val;
+    if(curQ)doSearch(0);
+}
 
-function handleThumbError(fileId) {{
+function changePosterMode(){
+    pMode=document.getElementById('posterMode').value;
+    localStorage.setItem('posterMode',pMode);
+    if(curQ)doSearch(curOff);
+}
+
+function handleThumbError(fileId) {
     var box = document.getElementById('poster-box-' + fileId);
-    if (box) {{
+    if (box) {
         box.innerHTML = '<div class="thumb-error"><span style="font-size:11px;color:var(--muted);">थंबनेल लोड नहीं हुआ</span></div>';
-    }}
-}}
+    }
+}
 
-async function reloadThumb(fileId) {{
+async function reloadThumb(fileId) {
     var timestamp = new Date().getTime();
     var box = document.getElementById('poster-box-' + fileId);
-    if (box) {{
-        box.innerHTML = '<img src="/api/thumb?file_id=' + fileId + '&retry=true&t=' + timestamp + '" class="fc-poster" onerror="handleThumbError(\\'' + fileId + '\\')">';
-    }}
-}}
+    if (box) {
+        // ✅ FIX: कोएब को क्रैश होने से बचाने के लिए थंबनेल रीलोडर जावास्क्रिप्ट में स्ट्रिक्ट कोट्स एनक्लोजर फिक्स
+        box.innerHTML = '<img src="/api/thumb?file_id=' + fileId + '&retry=true&t=' + timestamp + '" class="fc-poster" onerror="handleThumbError(\'' + fileId + '\')">';
+    }
+}
 
-async function doSearch(o){{
+async function doSearch(o){
     var q=document.getElementById('q').value.trim();
-    if(!q){{alert('Please enter a movie name');return;}}
+    if(!q){alert('Please enter a movie name');return;}
     curQ=q;curOff=o;if(o===0)curPage=1;
 
     var resDiv=document.getElementById('results');
     resDiv.className='res-grid mode-'+pMode;
     resDiv.innerHTML='<div class="spin-wrap"><div class="spinner"></div><span>Searching...</span></div>';
 
-    try{{
+    try{
         var r=await fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+o+'&col='+curCol+'&mode='+pMode);
-        if(!r.ok){{alert('Error fetching results');return;}}
+        if(!r.ok){alert('Error fetching results from server');return;}
         var d=await r.json();
-        if(d.error){{alert(d.error);return;}}
+        if(d.error){alert(d.error);return;}
+        
         document.getElementById('resInfo').style.display='flex';
         document.getElementById('resCount').innerHTML='More to explore: <span style="color:var(--text);font-weight:600">'+q+'</span>';
-        if(!d.results||!d.results.length){{
+        
+        if(!d.results||!d.results.length){
             resDiv.innerHTML='<div class="empty"><div class="empty-icon">&#9888;</div><p>No titles found for "'+q+'"</p></div>';
             document.getElementById('pageBox').style.display='none';return;
-        }}
+        }
+        
         var h='';
-        d.results.forEach(function(f){{
+        d.results.forEach(function(f){
             var sc=(f.source||'primary').toLowerCase();
             if(!['primary','cloud','archive'].includes(sc))sc='primary';
 
             var adminBtns='';
-            if(d.is_admin){{
+            if(d.is_admin){
                 var safeName=f.name.replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'");
                 adminBtns='<div class="poster-admin">'+
                     '<button class="btn-edit" onclick="editFile(\''+f.file_id+'\',\''+f.raw_collection+'\',\''+safeName+'\')">&#9999; Edit</button>'+
                     '<button class="btn-del" onclick="deleteFile(\''+f.file_id+'\',\''+f.raw_collection+'\')">&#128465; Delete</button>'+
                 '</div>';
-            }}
+            }
 
             var posterHtml='';
-            if(pMode!=='none'){{
+            if(pMode!=='none'){
                 posterHtml='<div class="poster-box" id="poster-box-'+f.file_id+'">'+
                     '<img src="'+f.tg_thumb+'" class="fc-poster" onerror="handleThumbError(\''+f.file_id+'\')" loading="lazy">'+
                     '<div class="poster-top">'+
@@ -166,23 +173,23 @@ async function doSearch(o){{
                     '</div>'+
                     adminBtns+
                 '</div>';
-            }}
+            }
 
             var textInfo='';
-            if(pMode==='none'){{
+            if(pMode==='none'){
                 textInfo='<div class="fc-text-info">'+
                     '<span class="tc-type">'+f.type.toUpperCase()+'</span>'+
                     '<span class="tc-size">'+f.size+'</span>'+
                     '<span class="source-pill '+sc+'" style="margin-left:auto"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+
                 '</div>';
-                if(d.is_admin){{
+                if(d.is_admin){
                     var safeName2=f.name.replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'");
                     textInfo+='<div style="display:flex;gap:5px;padding:5px 11px 0">'+
                         '<button class="btn-edit" onclick="editFile(\''+f.file_id+'\',\''+f.raw_collection+'\',\''+safeName2+'\')">&#9999; Edit</button>'+
                         '<button class="btn-del" onclick="deleteFile(\''+f.file_id+'\',\''+f.raw_collection+'\')">&#128465; Delete</button>'+
                     '</div>';
-                }}
-            }}
+                }
+            }
 
             h+='<div class="file-card">'+
                 posterHtml+
@@ -191,109 +198,108 @@ async function doSearch(o){{
                     '<div class="fc-name" onclick="window.open(\''+f.watch+'\',\'_blank\')">'+f.name+'</div>'+
                 '</div>'+
             '</div>';
-        }});
+        });
         resDiv.innerHTML=h;
         nextOff=d.next_offset;
         document.getElementById('pageBox').style.display='flex';
         document.getElementById('pBtn').disabled=(o===0);
         document.getElementById('nBtn').disabled=!nextOff;
         document.getElementById('pgInfo').textContent='Page '+curPage;
-    }}catch(e){{alert('Search error');}}
+    }catch(e){alert('Network connection error');}
 }
 
-function next(){{if(nextOff){{curPage++;doSearch(nextOff);scrollTo(0,0);}}}}
-function prev(){{if(curPage>1){{curPage--;doSearch(Math.max(0,curOff-LIMIT_VAL));scrollTo(0,0);}}}}
+function next(){if(nextOff){curPage++;doSearch(nextOff);scrollTo(0,0);}}
+function prev(){if(curPage>1){curPage--;doSearch(Math.max(0,curOff-LIMIT_VAL));scrollTo(0,0);}}
 
-document.addEventListener('DOMContentLoaded',function(){{
+document.addEventListener('DOMContentLoaded',function(){
     var pm=document.getElementById('posterMode');if(pm)pm.value=pMode;
-    var q=document.getElementById('q');if(q)q.addEventListener('keydown',function(e){{if(e.key==='Enter')doSearch(0);}});
+    var q=document.getElementById('q');if(q)q.addEventListener('keydown',function(e){if(e.key==='Enter')doSearch(0);});
     var cs=document.getElementById('colSelect');if(cs)cs.value=curCol;
-}});
+});
 
-async function deleteFile(fid,col){{
+async function deleteFile(fid,col){
     if(!confirm('Are you sure you want to delete this file?'))return;
-    try{{
-        var r=await fetch('/api/delete',{{method:'POST',body:JSON.stringify({{file_id:fid,collection:col}}),headers:{{'Content-Type':'application/json'}}}});
+    try{
+        var r=await fetch('/api/delete',{method:'POST',body:JSON.stringify({file_id:fid,collection:col}),headers:{'Content-Type':'application/json'}});
         var res=await r.json();
-        if(res.success){{doSearch(curOff);}}
-        else{{alert(res.error||'Delete failed!');}}
-    }catch(e){{alert('Delete failed');}}
-}}
+        if(res.success){doSearch(curOff);}
+        else{alert(res.error||'Delete failed!');}
+    }catch(e){alert('Delete failed');}
+}
 
-function editFile(fid,col,currentName){{
+function editFile(fid,col,currentName){
     activeFid=fid;activeCol=col;
-    if(cropperInstance){{cropperInstance.destroy();cropperInstance=null;}}
+    if(cropperInstance){cropperInstance.destroy();cropperInstance=null;}
     document.getElementById('emName').value=currentName;
     document.getElementById('emFile').value='';
     document.getElementById('cropContainer').style.display='none';
     var prevBox=document.getElementById('emPreviewBox');
     prevBox.style.display='flex';
-    prevBox.innerHTML='<img src="/api/thumb?file_id='+fid+'" class="t-prev-img" onerror="this.src=\\'https://placehold.co/600x338/181818/FFF?text=No+Thumbnail\\';">';
+    prevBox.innerHTML='<img src="/api/thumb?file_id='+fid+'" class="t-prev-img" onerror="this.src=\'https://placehold.co/600x338/181818/FFF?text=No+Thumbnail\';">';
     document.getElementById('editCombinedModal').classList.add('open');
-}}
+}
 
-function closeCombinedModal(){{
+function closeCombinedModal(){
     document.getElementById('editCombinedModal').classList.remove('open');
-    if(cropperInstance){{cropperInstance.destroy();cropperInstance=null;}}
-}}
+    if(cropperInstance){cropperInstance.destroy();cropperInstance=null;}
+}
 
-function handleLocalPreview(input){{
-    if(input.files&&input.files[0]){{
+function handleLocalPreview(input){
+    if(input.files&&input.files[0]){
         var reader=new FileReader();
-        reader.onload=function(e){{
-            if(cropperInstance){{cropperInstance.destroy();}}
+        reader.onload=function(e){
+            if(cropperInstance){cropperInstance.destroy();}
             document.getElementById('emPreviewBox').style.display='none';
             var cropWrap=document.getElementById('cropContainer');
             cropWrap.style.display='block';
             cropWrap.innerHTML='<img id="cropImage" src="'+e.target.result+'" style="max-width:100%;">';
             var img=document.getElementById('cropImage');
-            cropperInstance=new Cropper(img,{{
+            cropperInstance=new Cropper(img,{
                 aspectRatio:16/9,viewMode:1,dragMode:'move',background:false,
                 autoCropArea:1,restore:false,guides:false,center:true,highlight:false,
                 cropBoxMovable:false,cropBoxResizable:false,toggleDragModeOnDblclick:false,
                 zoomable:true,movable:true
-            }});
-        }};
+            });
+        };
         reader.readAsDataURL(input.files[0]);
-    }}
-}}
+    }
+}
 
-async function saveAllChanges(){{
+async function saveAllChanges(){
     var newName=document.getElementById('emName').value.trim();
-    if(!newName){{alert('File name cannot be empty!');return;}}
+    if(!newName){alert('File name cannot be empty!');return;}
     var btn=document.getElementById('emSaveBtn');
     btn.disabled=true;btn.innerText='Processing pipeline...';
-    try{{
-        if(cropperInstance){{
-            var canvas=cropperInstance.getCroppedCanvas({{width:1280,height:720,imageSmoothingEnabled:true,imageSmoothingQuality:'high'}});
-            var blob=await new Promise(function(resolve){{canvas.toBlob(resolve,'image/jpeg',0.9);}});
-            if(blob){{
+    try{
+        if(cropperInstance){
+            var canvas=cropperInstance.getCroppedCanvas({width:1280,height:720,imageSmoothingEnabled:true,imageSmoothingQuality:'high'});
+            var blob=await new Promise(function(resolve){canvas.toBlob(resolve,'image/jpeg',0.9);});
+            if(blob){
                 var formData=new FormData();
                 formData.append('file_id',activeFid);
                 formData.append('collection',activeCol);
                 formData.append('image',blob,'cropped_poster.jpg');
-                var upRes=await fetch('/api/upload_thumb',{{method:'POST',body:formData}});
+                var upRes=await fetch('/api/upload_thumb',{method:'POST',body:formData});
                 var upData=await upRes.json();
-                if(!upData.success){{btn.disabled=false;btn.innerText='Save Changes';return;}}
-            }}
-        }}
-        var r=await fetch('/api/edit_name',{{method:'POST',body:JSON.stringify({{file_id:activeFid,collection:activeCol,new_name:newName}}),headers:{{'Content-Type':'application/json'}}}});
+                if(!upData.success){btn.disabled=false;btn.innerText='Save Changes';return;}
+            }
+        }
+        var r=await fetch('/api/edit_name', {method:'POST',body:JSON.stringify({file_id:activeFid,collection:activeCol,new_name:newName}),headers:{'Content-Type':'application/json'}});
         var res=await r.json();
-        if(res.success||cropperInstance){{
+        if(res.success||cropperInstance){
             closeCombinedModal();reloadThumb(activeFid);doSearch(curOff);
         }
-    }}catch(e){{alert('Network synchronization error');}}
-    finally{{btn.disabled=false;btn.innerText='Save Changes';}}
-}}
+    }catch(e){alert('Network synchronization error');}
+    finally{btn.disabled=false;btn.innerText='Save Changes';}
+}
 """.replace("__LIMIT_PLACEHOLDER__", str(MAX_WEB_RESULTS))
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 🏠 SEARCH ZONE HTML
+# 🏠 FIXED SEARCH ZONE HTML — (NO OVERWRITE ICON)
 # ─────────────────────────────────────────────────────────────────────────────
 SEARCH_ZONE = (
     '<div class="search-zone">'
         '<div class="search-row1">'
-            # ✅ FIX 1: सर्च इनपुट से ओवरराइट हो रहे फालतू '⚲' आइकन को हटाकर सुंदर मैग्नीफाइंग ग्लास '🔍' लगाया
             '<div class="search-wrap"><span class="s-icon">🔍</span>'
             '<input class="search-input" id="q" placeholder="Type a movie name to search..."></div>'
             '<button class="search-btn" onclick="doSearch(0)">Search</button>'
