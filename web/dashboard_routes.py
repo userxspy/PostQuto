@@ -12,18 +12,18 @@ dashboard_routes = web.RouteTableDef()
 CARD_CSS = """
 <style>
 /* ── Search zone ── */
-.search-zone{padding:16px 4% 0}
-.search-row1{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.search-zone{padding:16px 3% 0}
+.search-row1{display:flex;align-items:stretch;gap:8px;margin-bottom:8px;min-height:44px}
 .search-row2{display:flex;align-items:center;gap:8px;margin-bottom:16px}
-.search-wrap{flex:1;display:flex;align-items:center;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:0 12px;gap:8px}
-.s-icon{color:var(--muted);font-size:16px}
-.search-input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:13px;padding:11px 0;font-family:inherit}
-.search-btn{background:linear-gradient(135deg,var(--accent),var(--accent-hover));color:#fff;border:none;border-radius:8px;padding:11px 22px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 4px 14px rgba(229,9,20,0.35)}
+.search-wrap{flex:1;min-width:0;display:flex;align-items:center;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:0 12px;gap:8px;overflow:hidden}
+.s-icon{color:var(--muted);font-size:16px;flex-shrink:0}
+.search-input{flex:1;min-width:0;width:100%;background:transparent;border:none;outline:none;color:var(--text);font-size:13px;padding:11px 0;font-family:inherit}
+.search-btn{flex-shrink:0;background:linear-gradient(135deg,var(--accent),var(--accent-hover));color:#fff;border:none;border-radius:8px;padding:0 22px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 4px 14px rgba(229,9,20,0.35);align-self:stretch}
 .search-btn:hover{opacity:0.92}
 .filter-select{background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:9px 10px;font-size:12px;font-weight:700;outline:none;cursor:pointer;font-family:inherit}
 
 /* ── Results grid ── */
-.res-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:14px;margin-bottom:24px}
+.res-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;margin-bottom:24px}
 .res-grid.mode-none .poster-box{display:none}
 
 /* ── File card ── */
@@ -309,10 +309,10 @@ SEARCH_ZONE = (
         '</div>'
     '</div>'
     '<div class="main" style="padding-top:4px;">'
-        '<div class="results-info" id="resInfo" style="padding:0 4% 12px;">'
+        '<div class="results-info" id="resInfo" style="padding:0 3% 12px;">'
             '<span class="results-count" id="resCount"></span>'
         '</div>'
-        '<div style="padding:0 4%">'
+        '<div style="padding:0 3%">'
             '<div id="results" class="res-grid">'
                 '<div class="empty"><div class="empty-icon">&#8981;</div>'
                 '<p>Find your favorite movies and TV shows.</p></div>'
