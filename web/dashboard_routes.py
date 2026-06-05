@@ -36,11 +36,11 @@ CARD_CSS = """
 
 /* ── Custom dropdown ── */
 .cdd-wrap{flex:0 1 auto;min-width:0;position:relative;user-select:none}
-.cdd-btn{width:auto;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:7px;padding:7px 26px 7px 9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;box-sizing:border-box;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:border-color .15s}
-.cdd-btn:hover,.cdd-btn.open{border-color:var(--accent)}
-.cdd-arrow{position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;font-size:9px;color:var(--muted);transition:transform .2s}
+.cdd-btn{width:auto;background:var(--bg3);color:var(--text);border:1.5px solid var(--border);border-radius:999px;padding:8px 28px 8px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;box-sizing:border-box;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:border-color .15s,box-shadow .15s}
+.cdd-btn:hover,.cdd-btn.open{border-color:var(--accent);box-shadow:0 0 0 3px rgba(229,9,20,0.12)}
+.cdd-arrow{position:absolute;right:12px;top:50%;transform:translateY(-50%);pointer-events:none;font-size:9px;color:var(--muted);transition:transform .2s}
 .cdd-btn.open+.cdd-arrow{transform:translateY(-50%) rotate(180deg)}
-.cdd-menu{position:absolute;top:calc(100% + 5px);left:0;right:0;background:var(--bg2,var(--bg3));border:1.5px solid var(--border);border-radius:10px;overflow:hidden;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.45);animation:cddIn .15s ease}
+.cdd-menu{position:absolute;top:calc(100% + 7px);left:50%;transform:translateX(-50%);min-width:max-content;background:var(--bg2,var(--bg3));border:1.5px solid var(--border);border-radius:16px;overflow:hidden;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.45);animation:cddIn .15s ease}
 @keyframes cddIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 .cdd-item{display:flex;align-items:center;gap:10px;padding:13px 14px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;transition:background .12s;border-bottom:1px solid var(--border)}
 .cdd-item:last-child{border-bottom:none}
@@ -101,11 +101,11 @@ CARD_CSS = """
 .tc-size{color:var(--muted);font-size:11px}
 
 /* ── Pagination ── */
-.pagination{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:8px}
-.pg-btn{background:var(--bg4);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:14px 0;font-size:15px;font-weight:700;font-style:italic;cursor:pointer;transition:background .15s;width:120px;text-align:center;flex-shrink:0}
+.pagination{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px}
+.pg-btn{background:var(--bg4);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s}
 .pg-btn:disabled{background:var(--bg3);color:var(--muted);cursor:not-allowed}
 .pg-btn:not(:disabled):hover{background:var(--bg3)}
-.pg-info{color:var(--text);font-size:15px;font-weight:400}
+.pg-info{color:var(--muted);font-size:12px;font-weight:600}
 
 /* ── Empty / Loading ── */
 .empty{text-align:center;padding:60px 20px;color:var(--muted)}
