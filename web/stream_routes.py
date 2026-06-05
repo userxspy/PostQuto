@@ -10,13 +10,12 @@ routes = web.RouteTableDef()
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
-# 🏠 ROOT ROUTE (FAST FINDER UI — THEME BUTTON ADDED)
+# 🏠 ROOT ROUTE
 # ─────────────────────────────────────────────
 @routes.get("/", allow_head=True)
 async def root_route_handler(request):
     bot_username = getattr(temp, 'U_NAME', 'AutoFilterBot')
-    
-    # ✅ FIX: Theme Button Added & CSS updated for Light/Dark variables
+
     html_content = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -80,13 +79,11 @@ html.light .hero-bg{background:linear-gradient(to top,var(--bg) 0,rgba(255,255,2
     </div>
 </main>
 <script>
-// ✅ Theme Toggle Logic 
 (function(){if(localStorage.getItem('theme')==='light')document.documentElement.classList.add('light')})();
 document.getElementById('theme-btn').addEventListener('click',()=>{
     let isLight = document.documentElement.classList.toggle('light');
     localStorage.setItem('theme', isLight ? 'light' : 'dark');
 });
-
 function startSearch(){
     const q=document.getElementById('searchInput').value.trim();
     const base=`https://t.me/BOT_USERNAME_PLACEHOLDER`;
@@ -102,8 +99,9 @@ document.getElementById('searchInput').addEventListener('keydown',e=>{
 </script>
 </body>
 </html>""".replace("BOT_USERNAME_PLACEHOLDER", bot_username)
-    
+
     return web.Response(text=html_content, content_type='text/html')
+
 
 # ─────────────────────────────────────────────
 # 📺 STREAM / WATCH ROUTE
@@ -111,60 +109,105 @@ document.getElementById('searchInput').addEventListener('keydown',e=>{
 @routes.get("/watch/{message_id}")
 async def watch_handler(request):
     try:
-        return web.Response(text=await media_watch(int(request.match_info['message_id'])), content_type='text/html')
-    except ValueError: return web.Response(status=400, text="Invalid Message ID")
+        return web.Response(
+            text=await media_watch(int(request.match_info['message_id'])),
+            content_type='text/html'
+        )
+    except ValueError:
+        return web.Response(status=400, text="Invalid Message ID")
     except Exception as e:
         logger.error(f"Watch Error: {e}")
         return web.Response(status=500, text="Internal Server Error")
 
+
 # ─────────────────────────────────────────────
-# 📥 DOWNLOAD & CORE LOGIC
+# 📥 DOWNLOAD & STREAMING CORE
 # ─────────────────────────────────────────────
 @routes.get("/download/{message_id}")
 async def download_handler(request):
-    try: return await media_download(request, int(request.match_info['message_id']))
-    except ValueError: return web.Response(status=400, text="Invalid Message ID")
+    try:
+        return await media_download(request, int(request.match_info['message_id']))
+    except ValueError:
+        return web.Response(status=400, text="Invalid Message ID")
     except Exception as e:
         logger.error(f"Download Error: {e}")
         return web.Response(status=500, text="Internal Server Error")
+
 
 async def media_download(request, message_id: int):
     try:
         media_msg = await temp.BOT.get_messages(BIN_CHANNEL, message_id)
         media = getattr(media_msg, media_msg.media.value, None) if media_msg and media_msg.media else None
-        if not media: return web.Response(status=404, text="Media Not Supported or Not Found")
+        if not media:
+            return web.Response(status=404, text="Media Not Supported or Not Found")
 
-        file_size, file_name = media.file_size, getattr(media, 'file_name', None)
-        if not file_name: file_name = f"video_{secrets.token_hex(3)}.mp4" if getattr(media_msg, 'video', None) else f"file_{secrets.token_hex(3)}.bin"
+        file_size = media.file_size
+        file_name = getattr(media, 'file_name', None)
+        if not file_name:
+            file_name = (
+                f"video_{secrets.token_hex(3)}.mp4"
+                if getattr(media_msg, 'video', None)
+                else f"file_{secrets.token_hex(3)}.bin"
+            )
 
-        mime_type = getattr(media, 'mime_type', None) or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+        mime_type = (
+            getattr(media, 'mime_type', None)
+            or mimetypes.guess_type(file_name)[0]
+            or "application/octet-stream"
+        )
 
+        # ── Range Header Parse ──
         try:
             r_head = request.headers.get('Range')
-            fb, ub = (int(x) if x else file_size - 1 for x in r_head.replace('bytes=', '').split('-')) if r_head else (0, file_size - 1)
-        except: fb, ub = 0, file_size - 1
+            if r_head:
+                parts_str = r_head.replace('bytes=', '').split('-')
+                fb = int(parts_str[0]) if parts_str[0] else 0
+                ub = int(parts_str[1]) if parts_str[1] else file_size - 1
+            else:
+                fb, ub = 0, file_size - 1
+        except Exception:
+            fb, ub = 0, file_size - 1
 
-        if ub > file_size or fb < 0 or ub < fb:
-            return web.Response(status=416, body="416: Range Not Satisfiable", headers={"Content-Range": f"bytes */{file_size}"})
+        # ── Clamp / Validate ──
+        ub = min(ub, file_size - 1)
+        if fb < 0 or ub < fb:
+            return web.Response(
+                status=416,
+                body="416: Range Not Satisfiable",
+                headers={"Content-Range": f"bytes */{file_size}"}
+            )
 
         req_len = ub - fb + 1
-        ncs = await chunk_size(req_len)
-        offset = await offset_fix(fb, ncs)
-        
-        body = TGCustomYield().yield_file(media_msg, offset, fb - offset, (ub % ncs) + 1, math.ceil(req_len / ncs), ncs)
+
+        # ✅ FIX: chunk_size और offset_fix अब plain def हैं — await हटाया
+        ncs    = chunk_size(req_len)
+        offset = offset_fix(fb, ncs)
+
+        # ✅ FIX: parts की सही गणना
+        #    पुराना: math.ceil(req_len / ncs) — गलत था जब offset और fb में gap हो
+        #    नया:   offset से ub तक का पूरा span cover करो
+        first_cut = fb - offset
+        last_cut  = (ub % ncs) + 1
+        parts     = math.ceil((req_len + first_cut) / ncs)
+
+        body = TGCustomYield().yield_file(
+            media_msg, offset, first_cut, last_cut, parts, ncs
+        )
+
         enc_fn = quote(file_name)
 
         return web.Response(
-            status=206 if request.headers.get('Range') else 200,
+            status=206 if r_head else 200,
             body=body,
             headers={
-                "Content-Type": mime_type,
-                "Content-Range": f"bytes {fb}-{ub}/{file_size}",
+                "Content-Type":        mime_type,
+                "Content-Range":       f"bytes {fb}-{ub}/{file_size}",
                 "Content-Disposition": f'attachment; filename="{enc_fn}"; filename*=UTF-8\'\'{enc_fn}',
-                "Accept-Ranges": "bytes",
-                "Content-Length": str(req_len)
+                "Accept-Ranges":       "bytes",
+                "Content-Length":      str(req_len),
             }
         )
+
     except Exception as e:
         logger.error(f"Stream Error: {e}")
         return web.Response(status=500, text="Server Error")
