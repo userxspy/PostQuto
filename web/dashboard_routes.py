@@ -13,12 +13,11 @@ CARD_CSS = """
 <style>
 /* ── Search zone ── */
 .search-zone{padding:16px 12px 0}
-.search-row1{display:flex;align-items:stretch;gap:0;margin-bottom:8px;min-height:54px;background:var(--bg3);border:1.5px solid var(--border);border-radius:999px;overflow:hidden;transition:border-color .18s;padding:0}
-.search-row1:focus-within{border-color:var(--border);box-shadow:none}
+.search-row1{display:flex;align-items:stretch;gap:0;margin-bottom:10px;min-height:50px;background:var(--bg3);border:1.5px solid var(--border);border-radius:999px;overflow:hidden;transition:border-color .18s;padding:0}
 .search-row2{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:16px}
-.search-wrap{flex:1;min-width:0;display:flex;align-items:center;background:transparent;border:none;border-radius:0;padding:0 6px 0 22px;gap:8px;overflow:hidden}
+.search-wrap{flex:1;min-width:0;display:flex;align-items:center;background:transparent;border:none;border-radius:0;padding:0 6px 0 18px;gap:8px;overflow:hidden}
 .search-wrap:focus-within{border-color:transparent}
-.search-input{flex:1;min-width:0;width:100%;background:transparent;border:none;outline:none;color:var(--text);caret-color:var(--text);font-size:15px;font-weight:500;padding:14px 0;font-family:inherit;letter-spacing:.01em;-webkit-tap-highlight-color:transparent}
+.search-input{flex:1;min-width:0;width:100%;background:transparent;border:none;outline:none;color:var(--text);caret-color:var(--accent);font-size:15px;font-weight:600;padding:13px 0;font-family:inherit;-webkit-tap-highlight-color:transparent}
 .search-input::placeholder{color:var(--muted);font-weight:400}
 .search-input:-webkit-autofill,
 .search-input:-webkit-autofill:hover,
@@ -27,20 +26,21 @@ CARD_CSS = """
   -webkit-box-shadow:0 0 0 100px var(--bg3) inset !important;
   box-shadow:0 0 0 100px var(--bg3) inset !important;
   -webkit-text-fill-color:var(--text) !important;
-  caret-color:var(--text) !important;
+  caret-color:var(--accent) !important;
   border-radius:0;
   transition:background-color 9999s ease-in-out 0s;
 }
-.search-btn{flex-shrink:0;position:relative;background:var(--accent);color:#fff;border:none;border-radius:999px;padding:0 28px;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:.04em;margin:5px 5px 5px 0;overflow:hidden;transition:background .15s,transform .1s;-webkit-tap-highlight-color:transparent;font-family:inherit}
-.search-btn:hover{background:var(--accent-hover)}
-.search-btn:active{transform:scale(0.95)}
-.search-btn .btn-txt{position:relative;z-index:2;pointer-events:none}
-.search-btn .ripple{position:absolute;border-radius:50%;background:rgba(255,255,255,0.35);transform:scale(0);animation:ripple-anim .55s linear;pointer-events:none;z-index:1}
-@keyframes ripple-anim{to{transform:scale(4);opacity:0}}
-.search-btn .btn-spinner{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:18px;height:18px;border:2.5px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;opacity:0;pointer-events:none}
-.search-btn.loading .btn-txt{opacity:0}
-.search-btn.loading .btn-spinner{opacity:1}
-.search-btn.loading{pointer-events:none}
+.search-btn-row{display:flex;justify-content:center;margin-bottom:12px}
+.search-btn{position:relative;overflow:hidden;background:linear-gradient(135deg,var(--accent),var(--accent-hover));color:#fff;border:none;border-radius:999px;padding:11px 40px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 4px 18px rgba(229,9,20,0.40);transition:transform .15s,box-shadow .15s,opacity .15s;letter-spacing:.4px}
+.search-btn:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 8px 28px rgba(229,9,20,0.55);opacity:0.95}
+.search-btn:active{transform:scale(.96)}
+/* ripple */
+.search-btn::after{content:'';position:absolute;inset:0;background:rgba(255,255,255,0);border-radius:inherit;pointer-events:none}
+.search-btn.ripple-go::after{animation:btnRipple .45s ease-out forwards}
+@keyframes btnRipple{0%{background:rgba(255,255,255,0.28);transform:scale(.6)}100%{background:rgba(255,255,255,0);transform:scale(1.6)}}
+/* pulse ring on idle */
+@keyframes btnPulse{0%,100%{box-shadow:0 4px 18px rgba(229,9,20,0.40)}50%{box-shadow:0 4px 28px rgba(229,9,20,0.70),0 0 0 6px rgba(229,9,20,0.10)}}
+.search-btn{animation:btnPulse 2.8s ease-in-out infinite}
 
 /* ── Custom dropdown ── */
 .cdd-wrap{flex:0 1 auto;min-width:0;position:relative;user-select:none}
@@ -89,7 +89,10 @@ CARD_CSS = """
 
 /* ── Poster bottom row: Edit | Delete (admin only) ── */
 .poster-admin{position:absolute;bottom:0;left:0;right:0;display:flex;gap:6px;padding:7px 8px;opacity:0;transform:translateY(8px);transition:opacity .2s ease,transform .22s ease;pointer-events:none}
-.file-card:hover .poster-admin{opacity:1;transform:translateY(0);pointer-events:all}
+.file-card.admin-active .poster-admin{opacity:1;transform:translateY(0);pointer-events:all}
+/* text-only admin row */
+.text-admin-row{display:none;gap:5px;padding:5px 11px 0}
+.file-card.admin-active .text-admin-row{display:flex}
 .btn-edit,.btn-del{flex:1;padding:6px 0;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;transition:background .12s,transform .1s;border:none}
 .btn-edit{background:rgba(42,42,48,.90);backdrop-filter:blur(10px);color:#fff;border:1px solid rgba(255,255,255,.18)}
 .btn-edit:hover{background:rgba(80,80,88,.95)}
@@ -125,7 +128,7 @@ CARD_CSS = """
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 🎬 JS ENGINE
+# 🎬 JS ENGINE — पुरानी working logic + नया card HTML
 # ─────────────────────────────────────────────────────────────────────────────
 JS_ENGINE = """
 var curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
@@ -133,19 +136,6 @@ var pMode=localStorage.getItem('posterMode')||'tg';
 var LIMIT_VAL = __LIMIT_PLACEHOLDER__;
 
 var activeFid = '', activeCol = '', cropperInstance = null;
-
-/* ── Ripple animation for search button ── */
-function createRipple(btn, e) {
-    var rect = btn.getBoundingClientRect();
-    var size = Math.max(rect.width, rect.height) * 1.4;
-    var x = e.clientX - rect.left - size / 2;
-    var y = e.clientY - rect.top - size / 2;
-    var ripple = document.createElement('span');
-    ripple.className = 'ripple';
-    ripple.style.cssText = 'width:' + size + 'px;height:' + size + 'px;left:' + x + 'px;top:' + y + 'px';
-    btn.appendChild(ripple);
-    setTimeout(function() { ripple.remove(); }, 600);
-}
 
 /* ── Custom dropdown logic ── */
 function closeCdds(){
@@ -212,6 +202,18 @@ async function reloadThumb(fileId) {
     }
 }
 
+function triggerRipple(btn){btn.classList.remove('ripple-go');void btn.offsetWidth;btn.classList.add('ripple-go');setTimeout(function(){btn.classList.remove('ripple-go');},460);}
+
+/* ── Admin buttons: click to show/hide ── */
+function toggleAdminBtns(card,e){
+    e.stopPropagation();
+    var isActive=card.classList.contains('admin-active');
+    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');});
+    if(!isActive){card.classList.add('admin-active');}
+}
+document.addEventListener('click',function(){
+    document.querySelectorAll('.file-card.admin-active').forEach(function(c){c.classList.remove('admin-active');});
+});
 async function doSearch(o){
     var q=document.getElementById('q').value.trim();
     if(!q){showToast('Please enter a movie name','error');return;}
@@ -248,7 +250,7 @@ async function doSearch(o){
 
             var posterHtml='';
             if(pMode!=='none'){
-                posterHtml='<div class="poster-box" id="poster-box-'+f.file_id+'">'+
+                posterHtml='<div class="poster-box" id="poster-box-'+f.file_id+'" onclick="toggleAdminBtns(this.closest(\\'.file-card\\'),event)">'+
                     '<img src="'+f.tg_thumb+'" class="fc-poster" onerror="handleThumbError(\\''+f.file_id+'\\')" loading="lazy">'+
                     '<div class="poster-top">'+
                         '<span class="type-chip">'+f.type.toUpperCase()+'</span>'+
@@ -261,7 +263,7 @@ async function doSearch(o){
 
             var textInfo='';
             if(pMode==='none'){
-                textInfo='<div class="fc-text-info">'+
+                textInfo='<div class="fc-text-info" onclick="toggleAdminBtns(this.closest(\\'.file-card\\'),event)">'+
                     '<span class="tc-type">'+f.type.toUpperCase()+'</span>'+
                     '<span class="tc-size">'+f.size+'</span>'+
                     '<span class="source-pill '+sc+'" style="margin-left:auto"><span class="source-dot"></span>'+sc.toUpperCase()+'</span>'+
@@ -298,17 +300,7 @@ var _tt;
 function showToast(m,t){t=t||'success';var x=document.getElementById('toast');x.textContent=m;x.className='toast '+t+' show';clearTimeout(_tt);_tt=setTimeout(function(){x.classList.remove('show');},3000);}
 
 document.addEventListener('DOMContentLoaded',function(){
-    var q=document.getElementById('q');
-    if(q){
-        q.addEventListener('keydown',function(e){
-            if(e.key==='Enter'){
-                var btn=document.getElementById('searchBtnMain');
-                var rect=btn.getBoundingClientRect();
-                createRipple(btn,{clientX:rect.left+rect.width/2,clientY:rect.top+rect.height/2});
-                doSearch(0);
-            }
-        });
-    }
+    var q=document.getElementById('q');if(q)q.addEventListener('keydown',function(e){if(e.key==='Enter')doSearch(0);});
     /* restore saved posterMode in custom dropdown */
     if(pMode==='none'){
         var mItems=document.querySelectorAll('#cddModeMenu .cdd-item');
@@ -322,7 +314,7 @@ async function deleteFile(fid,col){
     try{
         var r=await fetch('/api/delete',{method:'POST',body:JSON.stringify({file_id:fid,collection:col}),headers:{'Content-Type':'application/json'}});
         var res=await r.json();
-        if(res.success){showToast('\u2705 File deleted successfully!');doSearch(curOff);}
+        if(res.success){showToast('\\u2705 File deleted successfully!');doSearch(curOff);}
         else{showToast(res.error||'Delete failed!','error');}
     }catch(e){showToast('Delete failed','error');}
 }
@@ -372,7 +364,7 @@ async function saveAllChanges(){
     btn.disabled=true;btn.innerText='Processing pipeline...';
     try{
         if(cropperInstance){
-            showToast('\u2702\ufe0f Cropping & Uploading to Telegram...');
+            showToast('\\u2702\\ufe0f Cropping & Uploading to Telegram...');
             var canvas=cropperInstance.getCroppedCanvas({width:1280,height:720,imageSmoothingEnabled:true,imageSmoothingQuality:'high'});
             var blob=await new Promise(function(resolve){canvas.toBlob(resolve,'image/jpeg',0.9);});
             if(blob){
@@ -385,11 +377,11 @@ async function saveAllChanges(){
                 if(!upData.success){showToast(upData.error||'Telegram image sync failed!','error');btn.disabled=false;btn.innerText='Save Changes';return;}
             }
         }
-        showToast('\ud83d\udcbe Indexing metadata to Database...');
+        showToast('\\ud83d\\udcbe Indexing metadata to Database...');
         var r=await fetch('/api/edit_name',{method:'POST',body:JSON.stringify({file_id:activeFid,collection:activeCol,new_name:newName}),headers:{'Content-Type':'application/json'}});
         var res=await r.json();
         if(res.success||cropperInstance){
-            showToast('\u2728 Metadata & Studio Poster saved successfully!');
+            showToast('\\u2728 Metadata & Studio Poster saved successfully!');
             closeCombinedModal();reloadThumb(activeFid);doSearch(curOff);
         }else{showToast(res.error||'Metadata save failed!','error');}
     }catch(e){showToast('Network synchronization error','error');}
@@ -404,10 +396,12 @@ SEARCH_ZONE = (
     '<div class="search-zone">'
         '<div class="search-row1">'
             '<div class="search-wrap">'
-            '<input class="search-input" id="q" placeholder="Titles, people, genres\u2026"></div>'
-            '<button class="search-btn" id="searchBtnMain" onclick="createRipple(this,event);doSearch(0)">'
-                '<span class="btn-txt">Search</span>'
-                '<div class="btn-spinner"></div>'
+            '<input class="search-input" id="q" placeholder="Titles, people, genres\u2026">'
+            '</div>'
+        '</div>'
+        '<div class="search-btn-row">'
+            '<button class="search-btn" id="searchBtn" onclick="doSearch(0);triggerRipple(this)">'
+            '\U0001f50d\u2002Search'
             '</button>'
         '</div>'
         '<div class="search-row2">'
