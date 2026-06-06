@@ -124,7 +124,7 @@ CARD_CSS = """
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 🎬 JS ENGINE — पुरानी working logic + नया card HTML
+# 🎬 JS ENGINE — Smart Double Pre-fetching Engine Live
 # ─────────────────────────────────────────────────────────────────────────────
 JS_ENGINE = """
 var curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
@@ -287,6 +287,11 @@ async function doSearch(o){
         document.getElementById('pBtn').disabled=(o===0);
         document.getElementById('nBtn').disabled=!nextOff;
         document.getElementById('pgInfo').textContent='Page '+curPage;
+
+        /* 🔮 [FRONTEND SILENT PRE-FETCH ENGINE TRIGGER] */
+        if(nextOff) {
+            fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+nextOff+'&col='+curCol+'&mode='+pMode);
+        }
     }catch(e){showToast('Network error','error');}
 }
 
