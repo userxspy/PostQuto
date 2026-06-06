@@ -24,10 +24,57 @@ search_routes = web.RouteTableDef()
 # ─────────────────────────────────────────────────────────
 # 📸 THUMBNAIL CONCURRENCY & info.py CACHE BALANCER
 # ─────────────────────────────────────────────────────────
-# कोएब रैम की पूर्ण सुरक्षा के लिए इसे info.py के थ्रेशोल्ड वेरिएबल से लिंक रखा गया है
 MAX_CACHE = MAX_THUMB_CACHE             
 thumb_cache = {}
 thumb_semaphore = asyncio.Semaphore(5) 
+
+# 🔮 GLOBAL PRE-FETCH ENGINE CACHE
+PREFETCH_CACHE = {}  # Structural Format: {'user_id_query_col_mode_offset': [...]}
+
+# ─────────────────────────────────────────────────────────
+# 🔄 BACKGROUND PRE-FETCH WORKER
+# ─────────────────────────────────────────────────────────
+async def bg_prefetch_worker(tg_id, q, col, mode, prefetch_offset, lim):
+    """यह वर्कर बैकग्राउंड में चुपचाप अगले पेज का डेटा लोड करके कैशे में लॉक कर देगा"""
+    try:
+        cache_key = f"{tg_id}_{q}_{col}_{mode}_{prefetch_offset}"
+        
+        # अगर अगला पेज पहले से ही कैशे में प्रोसेस हो चुका है, तो डुप्लिकेट क्वेरी न मारें
+        if cache_key in PREFETCH_CACHE:
+            return
+
+        projection = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "thumb_url": 1}
+        flt_text = {"$text": {"$search": q}}
+        flt_regex = {"file_name": re.compile(re.escape(q), re.IGNORECASE)}
+        tgt_cols = {col: COLLECTIONS[col]} if col in COLLECTIONS else COLLECTIONS
+        
+        bg_docs = []
+        remaining_skip = prefetch_offset
+
+        for n, c in tgt_cols.items():
+            if len(bg_docs) >= lim: 
+                break
+            local_limit = lim - len(bg_docs)
+            docs = []
+            try:
+                docs = await c.find(flt_text, projection).sort("_id", -1).skip(remaining_skip).limit(local_limit).to_list(length=local_limit)
+            except Exception: 
+                pass
+            
+            if not docs:
+                docs = await c.find(flt_regex, projection).sort("_id", -1).skip(remaining_skip).limit(local_limit).to_list(length=local_limit)
+                
+            if docs:
+                for d in docs: 
+                    d["source_col"] = n.lower()
+                bg_docs.extend(docs)
+                remaining_skip = max(0, remaining_skip - len(docs))
+
+        if bg_docs:
+            PREFETCH_CACHE[cache_key] = bg_docs
+            logger.info(f"🔮 [PREFETCH ENGINE] Background loaded {len(bg_docs)} results for next offset: {prefetch_offset}")
+    except Exception as e:
+        logger.error(f"❌ Prefetch worker execution failed: {e}")
 
 # ─────────────────────────────────────────────────────────
 # 🔒 STRICT SECURITY: Telegram initData HMAC Verification
@@ -67,7 +114,7 @@ async def get_user_role(req):
     return None, None
 
 # ─────────────────────────────────────────────────────────
-# 🔍 SEARCH API — Rebuilt Grid Engine (With Cache Buster Sync)
+# 🔍 SEARCH API — Smart Pre-fetch Grid Engine
 # ─────────────────────────────────────────────────────────
 @search_routes.get("/api/search")
 async def api_search(req):
@@ -85,39 +132,66 @@ async def api_search(req):
     try: off = max(0, int(off))
     except: off = 0
 
-    flt_text = {"$text": {"$search": q}}
-    flt_regex = {"file_name": re.compile(re.escape(q), re.IGNORECASE)}
+    lim = MAX_WEB_RESULTS  # सख्त लॉक: 21 रिज़ल्ट्स
+    current_cache_key = f"{tg_id}_{q}_{col}_{mode}_{off}"
     
-    # ✅ ३-कॉलम नेटफ्लिक्स ग्रिड को परफेक्ट अलाइन रखने के लिए २१ रिज़ल्ट्स पर सख्त लॉक (MAX_WEB_RESULTS)
-    all_m, lim = [], MAX_WEB_RESULTS
-    tgt_cols = {col: COLLECTIONS[col]} if col in COLLECTIONS else COLLECTIONS
+    all_m = []
 
-    # 🚀 SPEED UP: बिना भारी काउंट किए सीधे कलेक्शन्स से डेटा फेच करें
-    remaining_skip = off
-    for n, c in tgt_cols.items():
-        if len(all_m) >= lim: break
-        
-        local_limit = lim - len(all_m)
-        # पहले तेज़ टेक्स्ट सर्च ट्राई करें
-        docs = await c.find(flt_text, {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "thumb_url": 1}).sort("_id", -1).skip(remaining_skip).limit(local_limit).to_list(length=local_limit)
-        
-        # अगर टेक्स्ट सर्च से कुछ न मिले, तो फ़ॉलबैक regex सर्च करें
-        if not docs and remaining_skip == 0:
-            docs = await c.find(flt_regex, {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "thumb_url": 1}).sort("_id", -1).limit(local_limit).to_list(length=local_limit)
+    # 🛑 स्टेप 1: चेक करें कि क्या इस पेज का डेटा पहले से बैकग्राउंड प्री-फेच में उपलब्ध है?
+    if current_cache_key in PREFETCH_CACHE:
+        all_m = PREFETCH_CACHE.pop(current_cache_key) # डेटा निकालें और मेमोरी फ्री करें
+        logger.info(f"⚡ [PREFETCH HIT] Serving Page Pipeline directly from Cache for offset {off}")
+
+    # 🛑 स्टेप 2: अगर कैशे मिस हुआ (जैसे पहला सर्च), तो तुरंत डेटाबेस से लोड करें
+    if not all_m:
+        projection = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "thumb_url": 1}
+        flt_text = {"$text": {"$search": q}}
+        flt_regex = {"file_name": re.compile(re.escape(q), re.IGNORECASE)}
+        tgt_cols = {col: COLLECTIONS[col]} if col in COLLECTIONS else COLLECTIONS
+
+        remaining_skip = off
+        for n, c in tgt_cols.items():
+            if len(all_m) >= lim: 
+                break
             
-        if docs:
-            for d in docs: d["source_col"] = n.lower()
-            all_m.extend(docs)
-            remaining_skip = max(0, remaining_skip - len(docs))
+            local_limit = lim - len(all_m)
+            docs = []
+            try:
+                docs = await c.find(flt_text, projection).sort("_id", -1).skip(remaining_skip).limit(local_limit).to_list(length=local_limit)
+            except Exception: 
+                pass
+            
+            if not docs and remaining_skip == 0:
+                docs = await c.find(flt_regex, projection).sort("_id", -1).limit(local_limit).to_list(length=local_limit)
+                
+            if docs:
+                for d in docs: d["source_col"] = n.lower()
+                all_m.extend(docs)
+                remaining_skip = max(0, remaining_skip - len(docs))
 
-    # 🚀 SPEED UP: process_doc को बिना asyncio.gather के डायरेक्ट सिंक लूप में प्रोसेस करें
+    # 🚀 स्टेप 3: करंट पेज का डेटा फाइनल होते ही, अगले पेज के लिए प्री-फेच वर्कर बैकग्राउंड में डाल दें
+    has_more = len(all_m) == lim
+    next_offset = off + lim if has_more else ""
+    
+    if has_more:
+        # अगले पेज (Current Offset + 21) को बैकग्राउंड टास्क में ट्रिगर किया
+        asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, next_offset, lim))
+
+    # फ्रंटएंड रिस्पॉन्स की मैपिंग (With Target Speed Tuning)
     results_list = []
-    thumb_salt = int(time.time() * 100)
+    thumb_salt = int(time.time() * 100) if mode != "none" else 0
     
     for d in all_m:
         fid = d.get("file_ref") or d.get("_id")
         db_id = d.get("_id")
-        tg_thumb = f"/api/thumb?file_id={db_id}&v={thumb_salt}"
+        
+        # Text Only मोड में कैशे बस्टर साल्ट और अनचाहे यूआरएल स्ट्रिंग्स जनरेशन पूरी तरह स्किप्ड
+        if mode == "none":
+            tg_thumb = ""
+            poster_url = ""
+        else:
+            tg_thumb = f"/api/thumb?file_id={db_id}&v={thumb_salt}"
+            poster_url = tg_thumb
         
         results_list.append({
             "file_id": db_id,
@@ -126,22 +200,20 @@ async def api_search(req):
             "type": d.get("file_type", "document").upper(),
             "source": d.get("source_col", "unknown").capitalize(),
             "raw_collection": d.get("source_col", "primary"),
-            "poster": "" if mode == "none" else tg_thumb, 
+            "poster": poster_url, 
             "tg_thumb": tg_thumb,
             "watch": f"/setup_stream?file_id={fid}&mode=watch",
             "download": f"/setup_stream?file_id={fid}&mode=download",
         })
 
-    # 🚀 PAGINATION LOGIC: अगर पूरे 21 रिज़ल्ट्स मिले हैं, मतलब अगला पेज उपलब्ध है
-    has_more = len(results_list) == lim
-    next_offset = off + lim if has_more else ""
-
-    # रैम फ्लश बूस्टर
-    gc.collect()
+    # एग्रेसिव ओओएम (OOM) रैम प्रोटेक्शन सेफगार्ड
+    if len(PREFETCH_CACHE) > 100:
+        PREFETCH_CACHE.clear()
+        gc.collect()
     
     return web.json_response({
         "results": results_list,
-        "total": off + len(results_list) + (1 if has_more else 0), # फ्रंटएंड कंपैटिबिलिटी के लिए वर्चुअल टोटल
+        "total": off + len(results_list) + (1 if has_more else 0), 
         "next_offset": next_offset,
         "is_admin": role == "admin",
     })
@@ -163,7 +235,6 @@ async def get_telegram_thumb(req):
     if is_retry and fid in thumb_cache:
         if thumb_cache[fid] == "NO_THUMB": thumb_cache.pop(fid, None)
 
-    # 1. इन-मेमोरी रैम कैशे लुकअप
     if fid in thumb_cache:
         if thumb_cache[fid] == "NO_THUMB": return web.Response(status=404)
         return web.Response(body=thumb_cache[fid], content_type="image/jpeg", headers=headers)
@@ -171,13 +242,12 @@ async def get_telegram_thumb(req):
     async with thumb_semaphore:
         if len(thumb_cache) >= MAX_CACHE:
             thumb_cache.clear()
-            gc.collect() # एग्रेसिव ओओएम प्रोटेक्शन रैम वाइपआउट
+            gc.collect() 
 
         if fid in thumb_cache:
             if thumb_cache[fid] == "NO_THUMB": return web.Response(status=404)
             return web.Response(body=thumb_cache[fid], content_type="image/jpeg", headers=headers)
 
-        # 2. मोंगोडीबी कैशे लुकअप (अगर थंबनेल आईडी पहले से लॉक है तो बिना टेलीग्राम को परेशान किए तुरंत दें)
         saved_thumb_id = None
         for col_name, col in COLLECTIONS.items():
             existing = await col.find_one({"_id": fid}, {"thumb_url": 1})
@@ -196,10 +266,8 @@ async def get_telegram_thumb(req):
             except Exception as e:
                 logger.error(f"❌ Failed to download cached file_id: {e}")
 
-        # 3. 🛡️ सख्त नियम: टेलीग्राम लाइव फ़ेचिंग विथ सख्त फ़्लडवेट लूप (No Fallback Allowed)
         await asyncio.sleep(0.2)
         
-        # ओरिजिनल पोस्टर हर हाल में लाने के लिए हमने मैक्सिमम अटैम्प्स को ५ पर सेट किया है
         for attempt in range(5): 
             try:
                 logger.info(f"📥 [TG THUMB FETCH] Fetching Telegram Node for File ID: {fid} (Attempt {attempt+1})")
@@ -216,7 +284,6 @@ async def get_telegram_thumb(req):
                     thumb_bytes = file_data.getvalue()
                     thumb_cache[fid] = thumb_bytes
                     
-                    # डेटाबेस में हमेशा के लिए सेव करें ताकि अगली बार तुरंत लोड हो
                     db_save_value = f"TG_ID:{thumb_id}"
                     for col_name, col in COLLECTIONS.items():
                         await col.update_one({"_id": fid}, {"$set": {"thumb_url": db_save_value}})
@@ -224,7 +291,6 @@ async def get_telegram_thumb(req):
                     await db.add_to_delete_queue(BIN_CHANNEL, msg.id, 5)
                     return web.Response(body=thumb_bytes, content_type="image/jpeg", headers=headers)
                 else:
-                    # फ़ाइल में थंबनेल एम्बेडेड ही नहीं है, तो डेटाबेस मॉडिफाई नहीं करेंगे, केवल फॉलबैक एरर देंगे
                     logger.warning(f"🚫 [NO THUMB EMBED] File has no embedded thumbnail inside telegram: {fid}")
                     thumb_cache[fid] = "NO_THUMB"
                     await db.add_to_delete_queue(BIN_CHANNEL, msg.id, 5)
@@ -232,14 +298,12 @@ async def get_telegram_thumb(req):
 
             except Exception as e:
                 err_text = str(e)
-                # ✅ सख्त नियम सिंक: अगर टेलीग्राम FloodWait फेंकता है, तो एपीआई हार मानकर नकली पोस्टर नहीं दिखाएगी,
-                # बल्कि चुपचाप लूप को रोककर स्लीप मोड में चली जाएगी और रास्ता साफ़ होने पर ओरिजिनल ही डाउनलोड करेगी।
                 if "FLOOD_WAIT" in err_text or "420" in err_text:
                     match = re.search(r'wait of (\d+) second', err_text)
                     wait_time = int(match.group(1)) if match else 20
                     logger.warning(f"⏳ [FLOOD WAIT ENCOUNTERED] API Loop Sleeping for {wait_time + 2}s to get original poster...")
                     await asyncio.sleep(wait_time + 2)
-                    continue # अगला अटैम्प ऑटोमैटिकली बिना क्रैश हुए फ्रेश रूट से ट्रिगर होगा
+                    continue 
                 
                 logger.error(f"❌ [THUMB CRASH] Processing failed: {e}")
                 await asyncio.sleep(2)
@@ -346,10 +410,8 @@ async def api_upload_thumb(req):
         if collection_field not in COLLECTIONS:
             return web.json_response({"error": "Target collection missing!"}, status=400)
 
-        # [RAM CACHE BUSTER SYNC]
         thumb_cache.pop(file_id_field, None)
 
-        # context block का उपयोग करके BytesIO बफर को इमेज अपलोड होते ही पूरी तरह फ्लश किया गया
         with io.BytesIO(image_bytes) as img_buffer:
             img_buffer.name = "poster.jpg"
             msg = await temp.BOT.send_photo(chat_id=BIN_CHANNEL, photo=img_buffer)
@@ -374,7 +436,6 @@ async def api_upload_thumb(req):
         
         await db.add_to_delete_queue(BIN_CHANNEL, msg.id, 5)
         
-        # फ़ोर्स रैम गारबेज क्लीनअप
         gc.collect()
         return web.json_response({"success": True})
         
