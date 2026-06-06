@@ -224,8 +224,7 @@ async function doSearch(o){
         if(!r.ok){showToast('Error fetching','error');return;}
         var d=await r.json();
         if(d.error){showToast(d.error,'error');return;}
-        document.getElementById('resInfo').style.display='flex';
-        document.getElementById('resCount').innerHTML='More to explore: <span style="color:var(--text);font-weight:600">'+q+'</span>';
+        document.getElementById('resInfo').style.display='none';
         if(!d.results||!d.results.length){
             resDiv.innerHTML='<div class="empty"><div class="empty-icon">&#9888;</div><p>No titles found for "'+q+'"</p></div>';
             document.getElementById('pageBox').style.display='none';return;
