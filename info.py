@@ -58,9 +58,6 @@ ADMINS = [int(x) for x in ADMINS.split() if x.isnumeric()]
 # 🖼️ IMAGES & CORE AI KEYS
 # ─────────────────────────────────────────────
 PICS = environ.get("PICS", "https://i.postimg.cc/8C15CQ5y/1.png").split()
-TMDB_API_KEY = environ.get("TMDB_API_KEY", "")
-GEMINI_API_KEY = environ.get("GEMINI_API_KEY", "")
-
 # ─────────────────────────────────────────────
 # 📢 STORAGE CHANNELS SYNC
 # ─────────────────────────────────────────────
@@ -103,9 +100,6 @@ PM_FILE_DELETE_TIME = int(environ.get("PM_FILE_DELETE_TIME", 600))
 
 # ✅ NEW: प्रीमियम रिमाइंडर इंजन का चेकिंग स्लीप गैप (CPU लोड 0% करने के लिए)
 PREMIUM_REMINDER_BUSY_GAP = int(environ.get("PREMIUM_REMINDER_BUSY_GAP", 60)) 
-
-# ✅ NEW: जेमिनी AI चैट मेमोरी टाइम आउट (RAM लीक रोकने के लिए 10 मिनट TTL)
-AI_MEMORY_TTL = int(environ.get("AI_MEMORY_TTL", 600)) 
 
 # ✅ NEW: वेबसाइट थंबनेल कैश कतार डिलीट टाइम (टेलीग्राम फ्लडवेट सेफ)
 THUMB_DELETE_TIME = int(environ.get("THUMB_DELETE_TIME", 5))
