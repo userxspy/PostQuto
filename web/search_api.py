@@ -32,6 +32,18 @@ thumb_semaphore = asyncio.Semaphore(5)
 PREFETCH_CACHE = {}  # Structural Format: {'user_id_query_col_mode_offset': [...]}
 
 # ─────────────────────────────────────────────────────────
+# 🔤 STRICT AND SEARCH QUERY BUILDER
+# ─────────────────────────────────────────────────────────
+def _build_strict_query(q: str) -> str:
+    """
+    MongoDB $text search को strict AND mode में convert करता है।
+    "Bijli Ka Pyaar" → `"Bijli" "Ka" "Pyaar"`
+    इससे सिर्फ वही results आते हैं जिनमें सभी words हों।
+    """
+    clean = q.replace('"', '').replace("'", "").strip()
+    return " ".join(f'"{w}"' for w in clean.split())
+
+# ─────────────────────────────────────────────────────────
 # 🔄 BACKGROUND PRE-FETCH WORKER
 # ─────────────────────────────────────────────────────────
 async def bg_prefetch_worker(tg_id, q, col, mode, prefetch_offset, lim):
@@ -44,9 +56,11 @@ async def bg_prefetch_worker(tg_id, q, col, mode, prefetch_offset, lim):
             return
 
         projection = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "thumb_url": 1}
-        flt_text = {"$text": {"$search": q}}
+        # ✅ FIX: strict AND search — सभी words match होने चाहिए
+        strict_q = _build_strict_query(q)
+        flt_text  = {"$text": {"$search": strict_q}}
         flt_regex = {"file_name": re.compile(re.escape(q), re.IGNORECASE)}
-        tgt_cols = {col: COLLECTIONS[col]} if col in COLLECTIONS else COLLECTIONS
+        tgt_cols  = {col: COLLECTIONS[col]} if col in COLLECTIONS else COLLECTIONS
         
         bg_docs = []
         remaining_skip = prefetch_offset
@@ -149,9 +163,11 @@ async def api_search(req):
     # 🛑 स्टेप 2: अगर कैशे मिस हुआ (जैसे पहला सर्च), तो तुरंत डेटाबेस से लोड करें
     if not all_m:
         projection = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "thumb_url": 1}
-        flt_text = {"$text": {"$search": q}}
+        # ✅ FIX: strict AND search — "Bijli Ka Pyaar" → "Bijli" "Ka" "Pyaar"
+        strict_q  = _build_strict_query(q)
+        flt_text  = {"$text": {"$search": strict_q}}
         flt_regex = {"file_name": re.compile(re.escape(q), re.IGNORECASE)}
-        tgt_cols = {col: COLLECTIONS[col]} if col in COLLECTIONS else COLLECTIONS
+        tgt_cols  = {col: COLLECTIONS[col]} if col in COLLECTIONS else COLLECTIONS
 
         remaining_skip = off
         for n, c in tgt_cols.items():
