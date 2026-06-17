@@ -3,6 +3,7 @@ import re
 import base64
 import asyncio
 from struct import pack
+from bson.objectid import ObjectId  # ✅ Actor Profile IDs के लिए इम्पोर्ट किया गया
 import motor.motor_asyncio
 from hydrogram.file_id import FileId
 from info import DATABASE_URL, DATABASE_NAME, USE_CAPTION_FILTER
@@ -28,11 +29,13 @@ db = client[DATABASE_NAME]
 primary = db["Primary"]
 cloud   = db["Cloud"]
 archive = db["Archive"]
+actors  = db["Actors"]          # ✅ Actors Collection ऐड किया गया
 
 COLLECTIONS = {
     "primary": primary,
     "cloud":   cloud,
     "archive": archive,
+    "actors":  actors,          # ✅ Dictionary में ऐड किया गया
 }
 
 # ─────────────────────────────────────────────────────────
@@ -40,6 +43,8 @@ COLLECTIONS = {
 # ─────────────────────────────────────────────────────────
 async def ensure_indexes():
     for name, col in COLLECTIONS.items():
+        if name == "actors":
+            continue # Actors के लिए नीचे अलग से इंडेक्स बनाया गया है
         try:
             # ✅ कम्पाउंड टेक्स्ट इंडेक्स को सुरक्षित रखा गया
             await col.create_index(
@@ -53,6 +58,14 @@ async def ensure_indexes():
                 pass
             else:
                 logger.warning(f"Index warning [{name}]: {e}")
+                
+    # ✅ Actors Collection के लिए Index
+    try:
+        await actors.create_index([("name", "text")], name="actors_name_text")
+        logger.info("✅ Actor Profile System Indexes OK")
+    except Exception as e:
+        if "already exists" not in str(e) and "IndexKeySpecsConflict" not in str(e):
+            logger.warning(f"Actor Index warning: {e}")
 
 # ─────────────────────────────────────────────────────────
 # 📊 DB STATS — With Live Thumbnail Breakdown Sync
@@ -219,16 +232,16 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
 async def delete_files(query, collection_type="all"):
     deleted = 0
     try:
+        # ✅ FIX: Actors Collection को गलती से डिलीट होने से बचाने के लिए Guard लगाया गया है
+        cols = [col for name, col in COLLECTIONS.items() if (collection_type == "all" or name == collection_type) and name != "actors"]
+        
         if query == "*":
-            cols = [col for name, col in COLLECTIONS.items() if collection_type == "all" or name == collection_type]
             for col in cols:
                 res = await col.delete_many({})
                 deleted += res.deleted_count
             return deleted
 
         flt   = {"file_name": _build_regex(str(query))}
-        cols  = [col for name, col in COLLECTIONS.items() if collection_type == "all" or name == collection_type]
-
         for col in cols:
             res = await col.delete_many(flt)
             deleted += res.deleted_count
@@ -285,3 +298,77 @@ def unpack_new_file_id(new_file_id: str):
     except Exception as e:
         logger.error(f"unpack_new_file_id error: {e}")
         return None
+
+# ─────────────────────────────────────────────────────────
+# 🎭 ACTOR TAGS MULTI-PIPELINE SEARCH ENGINE (NEW FEATURE)
+# ─────────────────────────────────────────────────────────
+async def get_actor_search_results(actor_name, tags_list, max_results, offset=0, collection_type="all"):
+    """नाम और सभी कस्टमाइज्ड टैग्स को मिलाकर सिंक करता है ताकि वाइल्डकार्ड क्रैश न हो।"""
+    all_terms = []
+    
+    if actor_name and str(actor_name).strip():
+        all_terms.append(str(actor_name).strip())
+        
+    if tags_list and isinstance(tags_list, list):
+        for t in tags_list:
+            if t and str(t).strip():
+                all_terms.append(str(t).strip())
+                
+    if not all_terms:
+        return [], ""
+                
+    escaped_terms = [re.escape(term) for term in all_terms if term]
+    combined_raw = r'(' + '|'.join(escaped_terms) + r')'
+    
+    try:
+        regex = re.compile(combined_raw, flags=re.IGNORECASE)
+    except Exception:
+        regex = re.compile(re.escape(actor_name) if actor_name else "NO_ACTOR_MATCH_FOUND", flags=re.IGNORECASE)
+        
+    reg_flt = {"$or": [{"file_name": regex}, {"caption": regex}]} if USE_CAPTION_FILTER else {"file_name": regex}
+    results = []
+    cols = [primary, cloud, archive] if collection_type == "all" else [COLLECTIONS.get(collection_type, primary)]
+    
+    for col in cols:
+        cursor = col.find(reg_flt, {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "caption": 1, "thumb_url": 1}).sort('_id', -1)
+        cursor.skip(offset).limit(max_results)
+        docs = await cursor.to_list(length=max_results)
+        if docs:
+            for doc in docs:
+                doc["file_id"] = doc["_id"]
+                doc["source_col"] = col.name.lower()
+            results.extend(docs)
+            if len(results) >= max_results:
+                results = results[:max_results]
+                break
+
+    has_more = len(results) == max_results
+    next_offset = offset + max_results if has_more else ""
+    return results, next_offset
+
+# ─────────────────────────────────────────────────────────
+# 🗑️ ACTOR PROFILE & GALLERY ELEMENT PURGE PIPELINE (NEW FEATURE)
+# ─────────────────────────────────────────────────────────
+async def delete_actor_profile(actor_id):
+    """डेटाबेस से एक्टर की पूरी प्रोफाइल डिलीट करता है।"""
+    try:
+        res = await actors.delete_one({"_id": ObjectId(actor_id)})
+        return bool(res.deleted_count)
+    except Exception as e:
+        logger.error(f"delete_actor_profile error: {e}")
+        return False
+
+async def delete_gallery_image_by_index(actor_id, index: int):
+    """गैलरी एरे में से स्पेसिफिक इंडेक्स वाली इमेज को पुल (हटा) करता है।"""
+    try:
+        doc = await actors.find_one({"_id": ObjectId(actor_id)})
+        if not doc or "gallery" not in doc: return False
+        gallery = doc["gallery"]
+        if index < 0 or index >= len(gallery): return False
+        
+        target_tg_id = gallery[index]
+        res = await actors.update_one({"_id": ObjectId(actor_id)}, {"$pull": {"gallery": target_tg_id}})
+        return bool(res.modified_count)
+    except Exception as e:
+        logger.error(f"delete_gallery_image error: {e}")
+        return False
